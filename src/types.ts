@@ -138,6 +138,14 @@ export interface ReconSummary {
   collection_rate: number;
 }
 
+/** Matches GET /v1/reconciliation/aging bucket labels */
+export interface ReconAgingBucketItem {
+  bucket: string;
+  count: number;
+  billed: number;
+  balance: number;
+}
+
 export interface ProviderSummary {
   provider_name: string;
   appointment_count: number;
@@ -197,6 +205,12 @@ export interface Provider {
   id: string;
   name: string;
   tenant_id: string;
+}
+
+export interface ProviderTarget {
+  provider_id: string;
+  weekly_checkout_target: number;
+  monthly_checkout_target: number;
 }
 
 // ─── Appointment summary / analytics ────────────────────────────

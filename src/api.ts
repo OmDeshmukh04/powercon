@@ -17,6 +17,8 @@ import type {
   FileUpload,
   Provider,
   InsuranceCashCollectedResponse,
+  ProviderTarget,
+  ReconAgingBucketItem,
 } from './types';
 
 const TOKEN_KEY = 'token';
@@ -72,21 +74,25 @@ api.interceptors.response.use(
 export type { AppRequestConfig };
 export default api;
 
-type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'pending';
+export type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'pending';
 
-function normalizeStatus(status?: string): AppointmentStatusKey {
-  const value = (status ?? '').trim().toLowerCase();
+/** Aligns with reconciliation SQL (ILIKE %checkout%) and backend appointment summary — substring match, one bucket per row. */
+export function normalizeAppointmentStatus(status?: string): AppointmentStatusKey {
+  const raw = (status ?? '').trim().toLowerCase();
+  if (!raw) return 'pending';
+  if (/\bnot\b\s+check/.test(raw) || raw.includes('unchecked')) return 'pending';
+  if (raw.includes('cancel')) return 'cancelled';
+  if (raw.includes('reschedule')) return 'rescheduled';
+  if (raw.includes('no-show') || raw.includes('no show') || raw.includes('noshow')) return 'no_show';
   if (
-    value === 'checked out' ||
-    value === 'checked_out' ||
-    value === 'checked-out' ||
-    value === 'check-out' ||
-    value === 'checkout'
-  ) return 'checked_out';
-  if (value === 'no-show' || value === 'noshow' || value === 'no_show') return 'no_show';
-  if (value === 'cancelled' || value === 'canceled') return 'cancelled';
-  if (value === 'rescheduled' || value === 'reschedule') return 'rescheduled';
-  if (value === 'pending' || value === 'scheduled') return 'pending';
+    raw.includes('check-out') ||
+    raw.includes('checkout') ||
+    raw.includes('checked out') ||
+    raw.includes('checked_out')
+  ) {
+    return 'checked_out';
+  }
+  if (raw === 'pending' || raw === 'scheduled' || raw.includes('scheduled')) return 'pending';
   return 'pending';
 }
 
@@ -96,12 +102,14 @@ function toIsoDay(dateLike?: string): string {
   return iso.slice(0, 10);
 }
 
+const MAX_APPOINTMENTS_PAGE_SIZE = 200;
+
 async function buildAppointmentSummaryFromList(
   filters: Pick<AppointmentFilters, 'date_from' | 'date_to' | 'provider'> = {}
 ): Promise<AppointmentSummary> {
   const params: Record<string, string | number> = {
     page: 1,
-    page_size: 500,
+    page_size: MAX_APPOINTMENTS_PAGE_SIZE,
   };
   if (filters.date_from) params.start_date = filters.date_from;
   if (filters.date_to) params.end_date = filters.date_to;
@@ -134,7 +142,7 @@ async function buildAppointmentSummaryFromList(
 
   for (const appt of all) {
     const day = toIsoDay(appt.appt_date);
-    const key = normalizeStatus(appt.status);
+    const key = normalizeAppointmentStatus(appt.status);
 
     if (!byDay.has(day)) {
       byDay.set(day, {
@@ -250,10 +258,27 @@ export async function getAppointments(
   if (filters.status)     params.status     = filters.status;
   if (filters.search)     params.patient_id = filters.search;
   if (filters.page)       params.page       = filters.page;
-  if (filters.page_size)  params.page_size  = filters.page_size ?? 50;
+  if (filters.page_size)  params.page_size  = Math.min(filters.page_size, MAX_APPOINTMENTS_PAGE_SIZE);
 
   const res = await api.get('/v1/appointments', { params });
   return coercePaginated<Appointment>(res.data, 'appointments');
+}
+
+/** Fetches every page (API caps page_size at 200) for charts and aggregations. */
+export async function fetchAppointmentsAllPages(
+  filters: Pick<AppointmentFilters, 'date_from' | 'date_to' | 'provider' | 'status'> = {}
+): Promise<Appointment[]> {
+  const all: Appointment[] = [];
+  let page = 1;
+  let pages = 1;
+  const page_size = MAX_APPOINTMENTS_PAGE_SIZE;
+  do {
+    const paged = await getAppointments({ ...filters, page, page_size });
+    all.push(...paged.items);
+    pages = Math.max(1, paged.pages || 1);
+    page += 1;
+  } while (page <= pages && page <= 100);
+  return all;
 }
 
 export async function getAppointmentKPIs(
@@ -288,10 +313,34 @@ export async function getProviders(): Promise<Provider[]> {
   return res.data.providers ?? [];
 }
 
+export async function getProviderTargets(): Promise<ProviderTarget[]> {
+  const res = await api.get<{ targets: ProviderTarget[] }>('/v1/providers/targets');
+  return res.data.targets ?? [];
+}
+
+export async function upsertProviderTargets(targets: ProviderTarget[]): Promise<ProviderTarget[]> {
+  const res = await api.put<{ targets: ProviderTarget[] }>('/v1/providers/targets', { targets });
+  return res.data.targets ?? [];
+}
+
 // ─── Reconciliation ─────────────────────────────────────────────
 export async function runReconciliation(): Promise<{ message: string }> {
   const res = await api.post<{ rows_processed: number; duration_ms: number }>('/v1/reconciliation/run');
   return { message: `Reconciliation complete: ${res.data.rows_processed} rows processed` };
+}
+
+export async function getReconAging(params: {
+  start_date?: string;
+  end_date?: string;
+  period?: string;
+} = {}): Promise<ReconAgingBucketItem[]> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+  if (params.period) query.period = params.period;
+
+  const res = await api.get<ReconAgingBucketItem[]>('/v1/reconciliation/aging', { params: query });
+  return Array.isArray(res.data) ? res.data : [];
 }
 
 export async function getReconSummary(
@@ -358,8 +407,15 @@ export async function getReconRows(
   };
 }
 
-export async function getProviderSummary(): Promise<ProviderSummary[]> {
-  const res = await api.get<any[]>('/v1/reconciliation/provider-summary');
+export async function getProviderSummary(params: {
+  start_date?: string;
+  end_date?: string;
+} = {}): Promise<ProviderSummary[]> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+
+  const res = await api.get<any[]>('/v1/reconciliation/provider-summary', { params: query });
   const grouped = new Map<string, ProviderSummary>();
 
   for (const row of res.data ?? []) {
@@ -472,4 +528,43 @@ export async function getInsuranceCashCollected(params: {
         }))
       : [],
   };
+}
+
+// ─── Charges ────────────────────────────────────────────────────
+const MAX_CHARGES_PAGE_SIZE = 200;
+
+export async function getCharges(
+  filters: {
+    date_from?: string;
+    date_to?: string;
+    cpt_code?: string;
+    provider_id?: string;
+    page?: number;
+    page_size?: number;
+  } = {}
+): Promise<PaginatedResponse<any>> {
+  const page_size = Math.min(filters.page_size ?? MAX_CHARGES_PAGE_SIZE, MAX_CHARGES_PAGE_SIZE);
+  const params: Record<string, string | number> = { page: filters.page ?? 1, page_size };
+  if (filters.date_from) params.start_date = filters.date_from;
+  if (filters.date_to) params.end_date = filters.date_to;
+  if (filters.cpt_code) params.cpt_code = filters.cpt_code;
+  if (filters.provider_id) params.provider_id = filters.provider_id;
+
+  const res = await api.get('/v1/charges', { params });
+  return coercePaginated<any>(res.data, 'charges');
+}
+
+export async function fetchChargesAllPages(
+  filters: { date_from?: string; date_to?: string; cpt_code?: string; provider_id?: string } = {}
+): Promise<any[]> {
+  const all: any[] = [];
+  let page = 1;
+  let pages = 1;
+  do {
+    const paged = await getCharges({ ...filters, page, page_size: MAX_CHARGES_PAGE_SIZE });
+    all.push(...paged.items);
+    pages = Math.max(1, paged.pages || 1);
+    page += 1;
+  } while (page <= pages && page <= 100);
+  return all;
 }

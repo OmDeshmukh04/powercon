@@ -19,8 +19,8 @@ export interface AppRouteItem {
 }
 
 export const appRoutes: AppRouteItem[] = [
-  { path: '/operational-dashboard', title: 'Provider Dashboard', section: 'Dashboards', icon: '📅', roles: ['admin', 'finance', 'support', 'provider'], element: <ProviderDashboard /> },
-  { path: '/financial-dashboard', title: 'Operational Dashboards', section: 'Dashboards', icon: '💰', roles: ['admin', 'finance'], element: <OperationalDashboard /> },
+  { path: '/provider-dashboard', title: 'Provider Dashboard', section: 'Dashboards', icon: '📅', roles: ['admin', 'finance', 'support', 'provider'], element: <ProviderDashboard /> },
+  { path: '/operational-dashboard', title: 'Operational Dashboard', section: 'Dashboards', icon: '💰', roles: ['admin', 'finance'], element: <OperationalDashboard /> },
   { path: '/uploads', title: 'Uploads', section: 'Admin', icon: '📤', roles: ['admin'], element: <Uploads /> },
   { path: '/reports', title: 'Reports', section: 'Admin', icon: '📊', roles: ['admin', 'finance', 'support'], element: <Reports /> },
   { path: '/manage', title: 'Manage', section: 'Admin', icon: '⚙️', roles: ['admin'], element: <Manage /> },

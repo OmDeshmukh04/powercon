@@ -2,6 +2,7 @@
   max-width: 1240px;
   margin: 0 auto;
   padding: 30px 20px 36px;
+  background: var(--page-bg);
 }
 
 .page-header {
@@ -52,6 +53,7 @@
 .dash-title {
   font-size: 22px;
   font-weight: 800;
+  color: var(--accent);
 }
 
 .dash-period {
@@ -75,12 +77,12 @@
 .kpi-card {
   background: #ffffff;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 12px;
   padding: 22px 18px 18px;
   position: relative;
   overflow: hidden;
   min-height: 148px;
-  box-shadow: 0 12px 32px rgba(45,127,193,.08);
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
 
 .kpi-card::after {
@@ -113,6 +115,7 @@
   font-weight: 800;
   letter-spacing: -0.5px;
   margin-bottom: 8px;
+  color: var(--accent);
 }
 
 .kpi-delta {
@@ -133,12 +136,12 @@
 .chart-card {
   background: #ffffff;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 12px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  box-shadow: 0 18px 50px rgba(45,127,193,.08);
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
 
 .chart-head {
@@ -154,6 +157,7 @@
   font-size: 15px;
   font-weight: 700;
   margin-bottom: 4px;
+  color: var(--accent);
 }
 
 .chart-sub {
@@ -204,9 +208,9 @@
 .table-card {
   background: #ffffff;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 18px 50px rgba(45,127,193,.08);
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
   margin-top: 24px;
 }
 

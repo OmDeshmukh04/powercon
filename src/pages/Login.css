@@ -4,17 +4,18 @@
 
 /* ── Tokens (subset needed for login) ── */
 :root {
-  --bg:        #f0f4f8;
+  --page-bg: #eeeeee;
+  --bg:        #eeeeee;
   --bg2:       #ffffff;
   --bg3:       #f7f9fc;
-  --border:    #d8e2ee;
-  --border2:   #c4d2e3;
-  --accent:    #2d7fc1;
-  --accent-d:  #1e5a8e;
-  --accent-g:  rgba(45, 127, 193, 0.1);
-  --text:      #1a2332;
-  --text2:     #4a5e78;
-  --text3:     #8496ae;
+  --border:    #e2e8f0;
+  --border2:   #cbd5e1;
+  --accent:    #014569;
+  --accent-d:  #026aa2;
+  --accent-g:  rgba(1, 69, 105, 0.08);
+  --text:      #1e293b;
+  --text2:     #64748b;
+  --text3:     #94a3b8;
   --r:         10px;
   --r-sm:      7px;
   --font:      'Montserrat', sans-serif;
@@ -111,7 +112,7 @@
   font-size: 20px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: #2d7fc1;
+  color: var(--accent);
   font-family: var(--font);
 }
 
@@ -121,7 +122,7 @@
   font-weight: 700;
   letter-spacing: -0.3px;
   margin-bottom: 4px;
-  color: var(--text);
+  color: var(--accent);
   font-family: var(--font);
 }
 .lw-sub {

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import type { AppDispatch } from '../redux/store';
 import { signIn } from '../redux/authSlice';
+import { ROLE_HOME_PATHS } from '../utils/roles';
 
 type DemoRole = 'admin' | 'finance' | 'support' | 'provider';
 
@@ -36,7 +37,7 @@ export default function Login() {
     try {
       const result = await dispatch(signIn({ email, password }));
       if (signIn.fulfilled.match(result)) {
-        navigate('/operational-dashboard');
+        navigate(ROLE_HOME_PATHS[result.payload.user.role]);
       } else {
         setError(result.error?.message || 'Invalid credentials.');
       }

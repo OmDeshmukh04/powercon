@@ -57,7 +57,7 @@ export default function Dashboard() {
           type: 'pie',
           radius: ['30%', '70%'],
           data,
-          label: { formatter: '{b}: {c}', fontSize: 10 },
+          label: { show: true, formatter: '{b}: {c}', fontSize: 10 },
           itemStyle: { borderRadius: 3, borderWidth: 1, borderColor: '#fff' },
           emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,.5)' } },
         }],
@@ -76,7 +76,20 @@ export default function Dashboard() {
         xAxis: { type: 'category', data: names, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: EC.text3, fontSize: 10 } },
         yAxis: { axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: EC.border } }, axisLabel: { color: EC.text3, fontSize: 10 } },
         tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 } },
-        series: [{ name: 'Collected', type: 'bar', data: collected, itemStyle: { color: EC.green, borderRadius: [3, 3, 0, 0] }, barMaxWidth: 24 }],
+        series: [{
+          name: 'Collected',
+          type: 'bar',
+          data: collected,
+          itemStyle: { color: EC.green, borderRadius: [3, 3, 0, 0] },
+          barMaxWidth: 24,
+          label: {
+            show: true,
+            position: 'top',
+            color: EC.text,
+            fontSize: 10,
+            formatter: (p: any) => fmt(Number(p.value ?? 0)),
+          },
+        }],
       });
     }
 
