@@ -47,7 +47,7 @@ const EC = {
   wfNeg: '#f87171',
 } as const;
 
-const PROVIDER_STATUS_COLORS = [EC.accent, EC.danger, EC.purple, EC.accent2, EC.accent3];
+const PROVIDER_STATUS_COLORS: string[] = [EC.accent, EC.danger, EC.purple, EC.accent2, EC.accent3];
 const CHART_AXIS_MUTED = '#9ca3af';
 
 /** Slider + drag zoom — same pattern as Provider Dashboard bar charts */
@@ -152,7 +152,6 @@ export default function OperationalDashboard() {
   // New chart data states
   const [appointmentsData, setAppointmentsData] = useState<Appointment[]>([]);
   const [chargesData, setChargesData] = useState<any[]>([]);
-  const [providersList, setProvidersList] = useState<string[]>([]);
   const [arAgingBuckets, setArAgingBuckets] = useState<ReconAgingBucketItem[]>([]);
 
   /* ── REFS ── */
@@ -285,8 +284,6 @@ export default function OperationalDashboard() {
       setChargesData(chargesList);
       setArAgingBuckets(agingRows);
 
-      const providers = Array.from(new Set(appointmentsList.map((a: any) => a.provider_name).filter(Boolean))) as string[];
-      setProvidersList(providers);
     } catch (error) {
       console.error('Failed to load reconciliation summary:', error);
       // Log additional details for debugging
@@ -304,7 +301,6 @@ export default function OperationalDashboard() {
       setPriorBalance(0);
       setAppointmentsData([]);
       setChargesData([]);
-      setProvidersList([]);
       setArAgingBuckets([]);
     } finally {
       setLoading(false);
@@ -1504,15 +1500,7 @@ export default function OperationalDashboard() {
 
 /* ═════════════════════ SUB-COMPONENTS ═════════════════════ */
 
-/* ── Section Header ── */
-function SectionHeader({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div className="od-section-header">
-      <span className="od-section-icon">{icon}</span>
-      <span className="od-section-label">{label}</span>
-    </div>
-  );
-}
+/* SectionHeader removed — unused */
 
 /* ── Recon Status Strip (single line, conditional) ── */
 interface ReconStatusStripProps {
