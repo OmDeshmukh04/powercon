@@ -20,9 +20,9 @@ const EC = {
   accent2: '#05a9a9',
   accent3: '#3d79b8',
   success: '#2ECC71',
-  warning: '#2563EB',
+  warning: '#6b7280',
   danger: '#0b5f97',
-  purple: '#480590',
+  purple: '#016b8f',
   accentLight: '#5db1b1',
   grey: '#ab5656',
 };

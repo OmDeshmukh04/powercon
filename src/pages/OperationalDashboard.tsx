@@ -47,19 +47,11 @@ const EC = {
   wfNeg: '#f87171',
 } as const;
 
-// Provider Hours — cycles through EC accent palette (dark → light blues/teals, no purple/gray)
-const PROVIDER_STATUS_COLORS = [
-  EC.accent,      // '#004569' — darkest navy
-  EC.danger,      // '#0b5f97' — deep blue
-  EC.accent3,     // '#3d79b8' — mid blue
-  EC.warning,     // '#2563EB' — bright blue
-  EC.accent2,     // '#05a9a9' — teal
-  EC.accentLight, // '#5db1b1' — light teal
-];
+// ── Provider Hours: vibrant multi-color palette matching providerwise pie charts ──
+const PROVIDER_STATUS_COLORS = ['#004569', '#0b5f97', '#016b8f', '#05a9a9', '#3d79b8', '#6b7280', '#5db1b1', '#ab5656'];
 const CHART_AXIS_MUTED = '#9ca3af';
 const CHART_AXIS_TEXT_STYLE = { fontFamily: 'Montserrat, sans-serif', fontSize: 10, fontWeight: 400 };
 const LEGEND_TEXT_STYLE = { color: '#1e293b', fontSize: 11, fontWeight: 600, fontFamily: 'Montserrat, sans-serif' };
-const CHART_LEGEND_TOP_RIGHT = { top: 10, right: 10, orient: 'vertical' as const, itemWidth: 12, itemHeight: 10, itemGap: 10, textStyle: LEGEND_TEXT_STYLE };
 const CHART_LEGEND_BOTTOM = { bottom: 4, left: 'center' as const, orient: 'horizontal' as const, itemWidth: 12, itemHeight: 10, itemGap: 14, textStyle: LEGEND_TEXT_STYLE };
 
 /** Slider + drag zoom — same pattern as Provider Dashboard bar charts */
@@ -175,11 +167,11 @@ export default function OperationalDashboard() {
   // Export state
   const [exportLoading, setExportLoading] = useState(false);
   const [exportLoadingId, setExportLoadingId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // New chart data states
   const [appointmentsData, setAppointmentsData] = useState<Appointment[]>([]);
   const [chargesData, setChargesData] = useState<any[]>([]);
-  const [providersList, setProvidersList] = useState<string[]>([]);
   const [arAgingBuckets, setArAgingBuckets] = useState<ReconAgingBucketItem[]>([]);
 
   /* ── REFS ── */
@@ -255,19 +247,18 @@ export default function OperationalDashboard() {
   /* ── EVENT HANDLERS ── */
   const loadSummaryAndRows = useCallback(async (start = dateFrom, end = dateTo): Promise<void> => {
     setLoading(true);
+    setLoadError(null);
     try {
       const priorEndDate = start ? dayBefore(start) : undefined;
 
-      const [summaryData, insuranceData, priorData, appointmentsList, chargesList, agingRows] = await Promise.all([
-        getReconSummary({ start_date: start || undefined, end_date: end || undefined }),
-        getInsuranceCashCollected({ start_date: start || undefined, end_date: end || undefined }),
-        priorEndDate
-          ? getReconSummary({ end_date: priorEndDate })
-          : Promise.resolve(null),
-        fetchAppointmentsAllPages({ date_from: start || undefined, date_to: end || undefined }),
-        fetchChargesAllPages({ date_from: start || undefined, date_to: end || undefined }),
-        getReconAging({ start_date: start || undefined, end_date: end || undefined }),
-      ]);
+      const summaryData = await getReconSummary({ start_date: start || undefined, end_date: end || undefined });
+      const insuranceData = await getInsuranceCashCollected({ start_date: start || undefined, end_date: end || undefined });
+      const priorData = priorEndDate
+        ? await getReconSummary({ end_date: priorEndDate })
+        : null;
+      const appointmentsList = await fetchAppointmentsAllPages({ date_from: start || undefined, date_to: end || undefined });
+      const chargesList = await fetchChargesAllPages({ date_from: start || undefined, date_to: end || undefined });
+      const agingRows = await getReconAging({ start_date: start || undefined, end_date: end || undefined });
 
       setSummary(summaryData);
       setInsuranceCashCollected(
@@ -280,9 +271,6 @@ export default function OperationalDashboard() {
       setAppointmentsData(appointmentsList);
       setChargesData(chargesList);
       setArAgingBuckets(agingRows);
-
-      const providers = Array.from(new Set(appointmentsList.map((a: any) => a.provider_name).filter(Boolean))) as string[];
-      setProvidersList(providers);
     } catch (error) {
       console.error('Failed to load reconciliation summary:', error);
       if (error instanceof Error) {
@@ -292,6 +280,7 @@ export default function OperationalDashboard() {
           name: error.name
         });
       }
+      setLoadError(error instanceof Error ? error.message : 'Failed to load reconciliation data');
       setSummary(null);
       setInsuranceCashCollected(0);
       setEraProcessedAmount(0);
@@ -299,7 +288,6 @@ export default function OperationalDashboard() {
       setPriorBalance(0);
       setAppointmentsData([]);
       setChargesData([]);
-      setProvidersList([]);
       setArAgingBuckets([]);
     } finally {
       setLoading(false);
@@ -388,8 +376,10 @@ export default function OperationalDashboard() {
     ];
     const trueVals = [t0, kpis.chargesGenerated, -kpis.paymentReceived, t2];
     const barColors = [EC.accent, EC.accent, EC.wfNeg, EC.accent];
-    const barTops = [t0, t1, t1, t2];
-    const connectorData = [0, 1, 2].map((i) => [i, i + 1, barTops[i + 1]] as [number, number, number]);
+    // Waterfall connectors: each connects the "exit" of one bar to the "entry" of the next
+    // Opening top (t0) → Billing bottom (t0);  Billing top (t1) → Payment top (t1);  Payment bottom (t2) → Closing top (t2)
+    const connectorYValues = [t0, t1, t2];
+    const connectorData = [0, 1, 2].map((i) => [i, i + 1, connectorYValues[i]] as [number, number, number]);
 
     chart.setOption({
       backgroundColor: 'transparent',
@@ -529,8 +519,13 @@ export default function OperationalDashboard() {
         itemWidth: 12,
         itemHeight: 12,
         itemGap: 12,
-        // ── legend style unified with all other charts ──
-        textStyle: LEGEND_TEXT_STYLE,
+        // ── CHANGE 4: explicit color + enough width so names are never clipped ──
+        textStyle: {
+          color: '#1e293b',
+          fontSize: 11,
+          fontWeight: 600,
+          fontFamily: 'Montserrat, sans-serif',
+        },
         formatter: (name: string) => {
           const item = pieData.find((d) => d.name === name);
           const count = item?.value ?? 0;
@@ -829,7 +824,7 @@ export default function OperationalDashboard() {
     }
   };
 
-  // Provider Hours — EC accent palette + Title Case names, highest bar on top
+  // ── CHANGE 3: Provider Hours — gray palette + normalize names to Title Case ──
   const renderProviderHours = (container: HTMLDivElement, appointments: Appointment[], chartsArray: echarts.ECharts[]): void => {
     try {
       if (!container || !appointments.length) return;
@@ -862,7 +857,7 @@ export default function OperationalDashboard() {
 
       chart.setOption({
         backgroundColor: 'transparent',
-        // EC accent palette — cycles through 6 blue/teal shades
+        // gray palette defined in PROVIDER_STATUS_COLORS above
         color: PROVIDER_STATUS_COLORS,
         legend: { ...CHART_LEGEND_BOTTOM, data: ['Appointments'] },
         tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, ...TOOLTIP_COMMON, formatter: tooltipFmt },
@@ -877,7 +872,7 @@ export default function OperationalDashboard() {
         yAxis: {
           type: 'category',
           data: providerNames,
-          inverse: true,
+          inverse: false,
           axisLine: { show: true, lineStyle: { color: EC.border } },
           axisTick: { show: false },
           axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text },
@@ -889,7 +884,7 @@ export default function OperationalDashboard() {
             data: providerValues.map((v, i) => ({
               value: v,
               itemStyle: {
-                // cycle through EC accent palette
+                // cycle through vibrant multi-color palette
                 color: PROVIDER_STATUS_COLORS[i % PROVIDER_STATUS_COLORS.length],
                 borderRadius: [0, 4, 4, 0],
               },
@@ -898,6 +893,7 @@ export default function OperationalDashboard() {
             label: {
               show: true,
               position: 'insideRight',
+              // white text on all vibrant-colored bars
               color: '#fff',
               fontSize: 11,
               fontWeight: 500,
@@ -1202,7 +1198,14 @@ export default function OperationalDashboard() {
       </div>
 
       {/* ── RECON STATUS STRIP ── */}
-      {!loading && !hasData ? (
+      {!loading && loadError ? (
+        <div className="od-status-strip od-status-strip--warn" role="status" aria-live="polite">
+          <span className="od-status-icon">⚠</span>
+          <span style={{ fontSize: 12.5, color: 'var(--text3)' }}>
+            Reconciliation data could not be loaded: {loadError}
+          </span>
+        </div>
+      ) : !loading && !hasData ? (
         <div className="od-status-strip od-status-strip--neutral" role="status">
           <span className="od-status-icon">○</span>
           <span style={{ fontSize: 12.5, color: 'var(--text3)' }}>
@@ -1214,13 +1217,6 @@ export default function OperationalDashboard() {
           warnings={warnings}
           exporting={exporting}
           onExport={handleExportException}
-          mismatchPercent={
-            (() => {
-              const totalClaimed = kpis.checkoutChargeEraCount + kpis.checkoutChargeNoEraCount;
-              if (!totalClaimed) return 0;
-              return (kpis.checkoutChargeNoEraCount / totalClaimed) * 100;
-            })()
-          }
         />
       )}
 
@@ -1484,25 +1480,14 @@ export default function OperationalDashboard() {
 
 /* ═════════════════════ SUB-COMPONENTS ═════════════════════ */
 
-/* ── Section Header ── */
-function SectionHeader({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div className="od-section-header">
-      <span className="od-section-icon">{icon}</span>
-      <span className="od-section-label">{label}</span>
-    </div>
-  );
-}
-
 /* ── Recon Status Strip ── */
 interface ReconStatusStripProps {
   warnings: Array<{ key: 'checkout_no_charge' | 'checkout_charge_no_era'; msg: string }>;
   exporting: string | null;
   onExport: (key: 'checkout_no_charge' | 'checkout_charge_no_era') => Promise<void>;
-  mismatchPercent: number;
 }
 
-function ReconStatusStrip({ warnings, exporting, onExport, mismatchPercent }: ReconStatusStripProps) {
+function ReconStatusStrip({ warnings, exporting, onExport }: ReconStatusStripProps) {
   const hasNoCharge = warnings.some((w) => w.key === 'checkout_no_charge');
   const hasNoEra    = warnings.some((w) => w.key === 'checkout_charge_no_era');
   const allOk       = warnings.length === 0;
