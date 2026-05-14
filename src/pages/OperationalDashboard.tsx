@@ -1,22 +1,7 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as echarts from 'echarts';
-import {
-  exportExceptionReport,
-  getReconSummary,
-  getReconAging,
-  getInsuranceCashCollected,
-  getProviderSummary,
-  fetchAppointmentsAllPages,
-  fetchChargesAllPages,
-  normalizeAppointmentStatus,
-} from '../api';
-import type {
-  ReconStatus,
-  ReconSummary,
-  ReconAgingBucketItem,
-  InsurancePayerBreakdownItem,
-  Appointment,
-} from '../types';
+import { getAppointments, getAppointmentSummary, getProviders, getProviderTargets } from '../api';
+import type { AppointmentKPIs, Provider, AppointmentFilters, AppointmentSummary, ProviderTarget } from '../types';
 import ExportDropdown from '../components/ExportDropdown';
 import type { ExportSection } from '../components/ExportDropdown';
 import {
@@ -26,9 +11,6 @@ import {
   captureChartImages,
 } from '../utils/exportUtils';
 import type { KpiEntry, TableSheet, ExportFilterContext } from '../utils/exportUtils';
-
-/* ═══════════════════ CONSTANTS (aligned with Provider Dashboard) ═══════════════════ */
-const CURRENCY_FORMAT = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 });
 
 const EC = {
   text: '#1a2332',
@@ -43,1613 +25,1017 @@ const EC = {
   purple: '#480590',
   accentLight: '#5db1b1',
   grey: '#ab5656',
-  /** Negative / payment step — matches Provider status waterfall */
-  wfNeg: '#f87171',
-} as const;
-
-const PROVIDER_STATUS_COLORS: string[] = [EC.accent, EC.danger, EC.purple, EC.accent2, EC.accent3];
-const CHART_AXIS_MUTED = '#9ca3af';
-
-/** Slider + drag zoom — same pattern as Provider Dashboard bar charts */
-const CHART_DATA_ZOOM = [
-  { type: 'slider' as const, bottom: 4, height: 16, borderColor: EC.border, fillerColor: 'rgba(1,69,105,.08)', handleStyle: { color: EC.accent }, labelFormatter: '' },
-  { type: 'inside' as const },
-];
-
-/** Grid: room for dataZoom slider (Provider monthly checkouts style) */
-const OD_BAR_GRID = { top: 28, right: 14, bottom: 52, left: 40 };
-
-const AR_AGING_BUCKET_ORDER = ['0-15', '15-30', '30-45', '45-60', '60+'] as const;
-
-const CHART_DIMS = {
-  waterfall: { height: 248, grid: { top: 44, right: 28, bottom: 64, left: 68 } },
-  barChart:  { height: 228, grid: { top: 14, right: 20, bottom: 40, left: 116 } },
-  donut:     { height: 228 },
-  /** Pie-of-pie (Provider Hours) + horizontal AR aging */
-  horizontal: { height: 268 },
-  /** Chart area height; names live in adjacent HTML list */
-  pieOfPie: { height: 340 },
-} as const;
-
-const TOOLTIP_COMMON = { backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 }, extraCssText: 'box-shadow:0 4px 16px rgba(0,0,0,.08);border-radius:8px' };
-
-/* ═══════════════════ UTILITIES ═══════════════════ */
-const fmt = (n: number): string => CURRENCY_FORMAT.format(n);
-
-function fmtCount(n: number): string {
-  return Math.round(n).toLocaleString();
-}
-
-function mergeArAgingBuckets(rows: ReconAgingBucketItem[]): ReconAgingBucketItem[] {
-  const map = new Map(rows.map((r) => [r.bucket, r]));
-  return AR_AGING_BUCKET_ORDER.map((key) => {
-    const r = map.get(key);
-    return {
-      bucket: key,
-      count: r?.count ?? 0,
-      billed: r?.billed ?? 0,
-      balance: r?.balance ?? 0,
-    };
-  });
-}
-
-/** Sorted provider → appointment counts for side list (matches pie segments order / colors). */
-function buildProviderAppointmentBreakdown(
-  appointments: Appointment[],
-): Array<{ name: string; count: number; pct: number }> {
-  const counts = new Map<string, number>();
-  for (const a of appointments) {
-    const name = (a.provider_name || 'Unknown').trim() || 'Unknown';
-    counts.set(name, (counts.get(name) || 0) + 1);
-  }
-  const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  const total = sorted.reduce((s, [, v]) => s + v, 0);
-  if (total <= 0) return [];
-  return sorted.map(([name, count]) => ({
-    name,
-    count,
-    pct: (count / total) * 100,
-  }));
-}
-
-const createResizeHandler = (charts: echarts.ECharts[]): (() => void) => {
-  return () => { charts.forEach((ch) => { try { ch.resize(); } catch { /* silently ignore */ } }); };
 };
+const PROVIDER_STATUS_COLORS = [EC.accent, EC.danger, EC.purple, EC.accent2, EC.accent3];
+const KPI_LINE_COLOR = '#014569';
+/** Status waterfall: negative steps (no-show / cancelled / rescheduled) — medium soft red */
+const WF_NEG_RED = '#f87171';
+/** Target lines on weekly/monthly checkout — lighter gray than no-show avg reference line */
+const CHART_TARGET_LINE_GRAY = '#94a3b8';
+/** No-show chart avg reference line — match faint checkout target line style */
+const NS_AVG_LINE_DARK = CHART_TARGET_LINE_GRAY;
+/** Softer axis/label gray for volume charts (lighter than no-show avg line) */
+const CHART_AXIS_TEXT_STYLE = { fontFamily: 'Montserrat, sans-serif', fontSize: 10, fontWeight: 400 };
+const CHART_LEGEND_TOP_RIGHT = { top: 10, right: 10, orient: 'vertical', itemWidth: 14, itemHeight: 10, itemGap: 12, textStyle: { color: EC.text, fontSize: 11, fontWeight: 500, fontFamily: 'Montserrat, sans-serif' } };
 
-
-/* ═══════════════════ DATE HELPERS ══════════════════════ */
+function fmt(n: number) { return n.toLocaleString(); }
 function todayStr() { return new Date().toISOString().split('T')[0]; }
-function weeksAgoStr(n: number) {
+function weeksAgoStr(n: number) { const d = new Date(); d.setDate(d.getDate() - n * 7); return d.toISOString().split('T')[0]; }
+// ── helper: exact N-day lookback for the fixed heatmap window ──
+function daysAgoStr(n: number) {
   const d = new Date();
-  d.setDate(d.getDate() - n * 7);
+  d.setDate(d.getDate() - n);
   return d.toISOString().split('T')[0];
 }
-/** Returns the ISO date string for the day before the given YYYY-MM-DD string. */
-function dayBefore(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00'); // force local midnight parse
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
+function isoWeekKey(d: string) {
+  const date = new Date(d + 'T00:00:00');
+  const day = (date.getUTCDay() + 6) % 7; // Mon=0
+  date.setUTCDate(date.getUTCDate() - day + 3); // move to Thursday
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const diff = (date.getTime() - firstThursday.getTime()) / 86400000;
+  const week = 1 + Math.floor((diff - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-/* ═══════════════════ COMPONENT ═════════════════════════════ */
-export default function OperationalDashboard() {
-  /* ── STATE ── */
-  const [summary, setSummary] = useState<ReconSummary | null>(null);
-  const [insuranceCashCollected, setInsuranceCashCollected] = useState(0);
-  const [eraProcessedAmount,     setEraProcessedAmount]     = useState(0);
-  const [payerBreakdown,         setPayerBreakdown]         = useState<InsurancePayerBreakdownItem[]>([]);
-  /** Net balance of ALL records BEFORE the selected start_date — this is the Opening AR. */
-  const [priorBalance,           setPriorBalance]           = useState(0);
-  const [dateFrom, setDateFrom] = useState(() => weeksAgoStr(4));
-  const [dateTo,   setDateTo]   = useState(() => todayStr());
-  const [loading,  setLoading]  = useState(true);
-  const [exporting, setExporting] = useState<'checkout_no_charge' | 'checkout_charge_no_era' | null>(null);
+function pctAgainstTotal(value: number, total: number): string {
+  if (!total) return '0.0% of total appointments';
+  return `${((value / total) * 100).toFixed(1)}% of total appointments`;
+}
+
+export default function ProviderDashboard() {
+  // Filters
+  const [dateFrom,  setDateFrom]  = useState(weeksAgoStr(4));
+  const [dateTo,    setDateTo]    = useState(todayStr());
+  const [provider,  setProvider]  = useState('');
+  const [pageSize,  setPageSize]  = useState(50);
+  const [page,      setPage]      = useState(1);
+
+  // Data
+  const [kpis,      setKpis]      = useState<AppointmentKPIs | null>(null);
+  const [summary,   setSummary]   = useState<AppointmentSummary | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerTargets, setProviderTargets] = useState<Record<string, ProviderTarget>>({});
+  const [loading,   setLoading]   = useState(true);
+
+  // ── Independent heatmap: last 90 days daily totals (ignores date-range filter) ──
+  const [heatmapDailyRows, setHeatmapDailyRows] = useState<{ appt_date: string; total: number }[]>([]);
+
+  // Chart refs
+  const refStatusDist   = useRef<HTMLDivElement>(null);
+  const refStatusTrend  = useRef<HTMLDivElement>(null);
+  const refCompletionVs = useRef<HTMLDivElement>(null);
+  const refWeeklyChk    = useRef<HTMLDivElement>(null);
+  const refMonthlyChk   = useRef<HTMLDivElement>(null);
+  const refNoShowRate   = useRef<HTMLDivElement>(null);
+  const refHeatmap      = useRef<HTMLDivElement>(null);
+  const charts     = useRef<echarts.ECharts[]>([]);
+  const didInitRange = useRef(false);
+  const summaryRef = useRef<AppointmentSummary | null>(null);
 
   // Export state
   const [exportLoading, setExportLoading] = useState(false);
   const [exportLoadingId, setExportLoadingId] = useState<string | null>(null);
 
-  // New chart data states
-  const [appointmentsData, setAppointmentsData] = useState<Appointment[]>([]);
-  const [chargesData, setChargesData] = useState<any[]>([]);
-  const [arAgingBuckets, setArAgingBuckets] = useState<ReconAgingBucketItem[]>([]);
+  // Chart title map (matches chart ref order)
+  const CHART_TITLES = [
+    'Status Distribution',
+    'Status Waterfall',
+    'Weekly Checkouts',
+    'Active Caseload',
+    'Monthly Checkouts',
+    'No-show Rate %',
+    'Daily Activity Heatmap',
+  ];
 
-  /* ── REFS ── */
-  const refWaterfall = useRef<HTMLDivElement>(null);
-  const refEraStatus = useRef<HTMLDivElement>(null);
-  const refEncountersWeekly = useRef<HTMLDivElement>(null);
-  const refEncountersMonthly = useRef<HTMLDivElement>(null);
-  const refNewPatientsWeekly = useRef<HTMLDivElement>(null);
-  const refNewPatientsMonthly = useRef<HTMLDivElement>(null);
-  const refProviderHours = useRef<HTMLDivElement>(null);
-  const refArAging = useRef<HTMLDivElement>(null);
-  const chartsRef    = useRef<echarts.ECharts[]>([]);
-  const resizeHandlerRef = useRef<(() => void) | null>(null);
+  const PAGE_SIZE = pageSize;
 
-  /* ── DERIVED VALUES ── */
-  const countByStatus = (key: ReconStatus): number =>
-    summary?.rows?.find((r) => r.status === key)?.count ?? 0;
+  // Load providers + provider-wise targets
+  useEffect(() => {
+    getProviders().then(setProviders).catch(() => {});
+    getProviderTargets()
+      .then((targets) => setProviderTargets(Object.fromEntries(targets.map((t) => [t.provider_id, t]))))
+      .catch(() => {});
+  }, []);
 
-  const { kpis, warnings, hasData } = useMemo(() => {
-    const checkoutNoChargeCount    = countByStatus('checkout_no_charge');
-    const checkoutChargeNoEraCount = countByStatus('checkout_charge_no_era');
-    const checkoutChargeEraCount   = countByStatus('checkout_charge_era');
-
-    const chargesGenerated = summary?.total_billed ?? 0;
-    // Payment Received = total ERA payments collected
-    // insuranceCashCollected (bank cash) is kept in state but not used in formula for now
-    const paymentReceived = eraProcessedAmount;
-
-    /*
-     * AR Waterfall (timeline-based)
-     * ─────────────────────────────────────────────
-     *  Opening AR  = prior period's net outstanding balance
-     *                (0 for the very first period on record)
-     *  + Charges   = gross charges billed THIS period
-     *  − Payment Received = total ERA payments collected THIS period
-     *  = Outstanding AR
-     *
-     *  Formula:  Outstanding = Opening + Charges − ERA Collected
-     */
-    const openingAr     = priorBalance;
-    const outstandingAr = Math.max(openingAr + chargesGenerated - paymentReceived, 0);
-
-    // Trend: show how much AR grew/shrank vs the opening balance
-    const outstandingTrendUp = outstandingAr > openingAr;
-    const trendDelta = openingAr > 0
-      ? ((outstandingAr - openingAr) / openingAr) * 100
-      : null;
-    const outstandingTrendLabel = trendDelta !== null
-      ? `${outstandingTrendUp ? '↑' : '↓'} ${Math.abs(trendDelta).toFixed(1)}% vs opening`
-      : openingAr === 0 && outstandingAr > 0
-        ? 'First period — no opening balance'
-        : '—';
-
-    const hasData = summary !== null && (summary.total_count ?? 0) > 0;
-
-    return {
-      kpis: {
-        checkoutNoChargeCount,
-        checkoutChargeNoEraCount,
-        checkoutChargeEraCount,
-        chargesGenerated,
-        paymentReceived,
-        openingAr,
-        outstandingAr,
-        outstandingTrendUp,
-        outstandingTrendLabel,
-      },
-      hasData,
-      warnings: [
-        checkoutNoChargeCount > 0 && {
-          key: 'checkout_no_charge' as const,
-          msg: `${checkoutNoChargeCount} checkout${checkoutNoChargeCount > 1 ? 's' : ''} without charge`,
-        },
-        checkoutChargeNoEraCount > 0 && {
-          key: 'checkout_charge_no_era' as const,
-          msg: `${checkoutChargeNoEraCount} charge${checkoutChargeNoEraCount > 1 ? 's' : ''} missing ERA`,
-        },
-      ].filter(Boolean) as Array<{ key: 'checkout_no_charge' | 'checkout_charge_no_era'; msg: string }>,
+  useEffect(() => {
+    const handler = () => {
+      getProviderTargets()
+        .then((targets) => setProviderTargets(Object.fromEntries(targets.map((t) => [t.provider_id, t]))))
+        .catch(() => {});
     };
-  }, [summary, insuranceCashCollected, eraProcessedAmount, priorBalance]);
+    window.addEventListener('provider-targets-updated', handler);
+    return () => window.removeEventListener('provider-targets-updated', handler);
+  }, []);
 
-  const arAgingIsEmpty = useMemo(() => {
-    const m = mergeArAgingBuckets(arAgingBuckets);
-    return m.every((b) => b.count === 0 && Math.abs(b.balance) < 0.01);
-  }, [arAgingBuckets]);
+  // ── Fetch daily totals for last 90 days; re-runs only on provider change ──
+  useEffect(() => {
+    const fetchHeatmap = async () => {
+      try {
+        const heatSummary = await getAppointmentSummary({
+          date_from: daysAgoStr(90),
+          date_to: todayStr(),
+          provider: provider || undefined,
+        });
+        // Store only what the calendar heatmap needs: date + total
+        setHeatmapDailyRows(
+          (heatSummary.daily ?? []).map((d) => ({ appt_date: d.appt_date, total: Number(d.total ?? 0) }))
+        );
+      } catch {
+        // keep stale on error
+      }
+    };
+    fetchHeatmap();
+  }, [provider]);
 
-  const providerHoursBreakdown = useMemo(
-    () => buildProviderAppointmentBreakdown(appointmentsData),
-    [appointmentsData],
-  );
-
-
-  /* ── EVENT HANDLERS ── */
-  const loadSummaryAndRows = useCallback(async (start = dateFrom, end = dateTo): Promise<void> => {
+  // Fetch summary then appointments (mount / filter changes)
+  const fetchSummaryAndAppointments = useCallback(async (opts?: { resetPage?: boolean }) => {
+    if (opts?.resetPage) setPage(1);
     setLoading(true);
     try {
-      /*
-       * Fire multiple requests in parallel:
-       *  1. Current period reconciliation summary
-       *  2. Insurance / bank cash-collected for this period
-       *  3. Prior period reconciliation summary (end_date = start - 1 day)
-       *     → its total_balance becomes the Opening AR for the waterfall
-       *  4. Appointments data for encounter charts
-       *  5. Charges data for new patient analysis
-       */
-      const priorEndDate = start ? dayBefore(start) : undefined;
+      console.log('DEBUG: Calling getAppointmentSummary with', { date_from: dateFrom || undefined, date_to: dateTo || undefined, provider: provider || undefined });
+      const summary = await getAppointmentSummary({ date_from: dateFrom || undefined, date_to: dateTo || undefined, provider: provider || undefined });
+      console.log('DEBUG: API summary response:', JSON.stringify(summary, null, 2));
+      console.log('DEBUG: KPIs from response:', JSON.stringify(summary.kpis, null, 2));
+      summaryRef.current = summary;
+      setSummary(summary);
+      setKpis(summary.kpis);
 
-      const [summaryData, insuranceData, priorData, appointmentsList, chargesList, agingRows] = await Promise.all([
-        getReconSummary({ start_date: start || undefined, end_date: end || undefined }),
-        getInsuranceCashCollected({ start_date: start || undefined, end_date: end || undefined }),
-        // Only fetch prior if there is a start_date; otherwise Opening AR = 0 (all-time query)
-        priorEndDate
-          ? getReconSummary({ end_date: priorEndDate })
-          : Promise.resolve(null),
-        fetchAppointmentsAllPages({ date_from: start || undefined, date_to: end || undefined }),
-        fetchChargesAllPages({ date_from: start || undefined, date_to: end || undefined }),
-        getReconAging({ start_date: start || undefined, end_date: end || undefined }),
-      ]);
-
-      setSummary(summaryData);
-      setInsuranceCashCollected(
-        insuranceData.cash_collected_mapped_amount || insuranceData.insurance_cash_collected || 0,
-      );
-      setEraProcessedAmount(insuranceData.era_processed_amount || 0);
-      setPayerBreakdown(insuranceData.payer_breakdown || []);
-      // Opening AR = net balance of everything before this period
-      setPriorBalance(priorData?.total_balance ?? 0);
-      
-      setAppointmentsData(appointmentsList);
-      setChargesData(chargesList);
-      setArAgingBuckets(agingRows);
-
-    } catch (error) {
-      console.error('Failed to load reconciliation summary:', error);
-      // Log additional details for debugging
-      if (error instanceof Error) {
-        console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
-        });
+      const min = summary?.bounds?.min_date ?? null;
+      const max = summary?.bounds?.max_date ?? null;
+      if (!didInitRange.current && min && max) {
+        didInitRange.current = true;
+        setDateFrom(min);
+        setDateTo(max);
       }
-      setSummary(null);
-      setInsuranceCashCollected(0);
-      setEraProcessedAmount(0);
-      setPayerBreakdown([]);
-      setPriorBalance(0);
-      setAppointmentsData([]);
-      setChargesData([]);
-      setArAgingBuckets([]);
+
+      const filters: AppointmentFilters = {
+        date_from: (summary?.bounds?.min_date ?? dateFrom) || undefined,
+        date_to:   (summary?.bounds?.max_date ?? dateTo)   || undefined,
+        provider:  provider || undefined,
+        page:      1,
+        page_size: PAGE_SIZE,
+      };
+
+      await getAppointments(filters);
+      setPage(1);
+    } catch {
+      // keep stale
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, provider, PAGE_SIZE]);
 
-  const handleApply = useCallback(() => { loadSummaryAndRows(); }, [loadSummaryAndRows]);
-
-  const handleExportException = useCallback(async (statusKey: 'checkout_no_charge' | 'checkout_charge_no_era'): Promise<void> => {
-    setExporting(statusKey);
+  // Fetch appointments only (page changes)
+  const fetchAppointments = useCallback(async (pg: number) => {
+    setLoading(true);
     try {
-      await exportExceptionReport({ status: statusKey, start_date: dateFrom || undefined, end_date: dateTo || undefined });
-    } catch (error) {
-      console.error('Export failed:', error);
+      const filters: AppointmentFilters = {
+        date_from: dateFrom || undefined,
+        date_to:   dateTo   || undefined,
+        provider:  provider || undefined,
+        page:      pg,
+        page_size: PAGE_SIZE,
+      };
+      await getAppointments(filters);
+    } catch {
+      // ignore
     } finally {
-      setExporting(null);
+      setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, provider, PAGE_SIZE]);
 
-  /* ── INITIALIZATION ── */
-  useEffect(() => { void loadSummaryAndRows(); }, []);
+  // mount
+  useEffect(() => { fetchSummaryAndAppointments({ resetPage: true }); }, []);
 
-  /* ── CHART RENDERING ── */
+  // filters change (skip first mount)
+  const filtersInitialized = useRef(false);
   useEffect(() => {
-    if (loading) return;
-    
-    let mounted = true;
+    if (!filtersInitialized.current) { filtersInitialized.current = true; return; }
+    fetchSummaryAndAppointments({ resetPage: true });
+  }, [dateFrom, dateTo, provider, fetchSummaryAndAppointments]);
+
+  // page change
+  useEffect(() => { if (page > 1) fetchAppointments(page); }, [page, fetchAppointments]);
+
+  // page-size change only affects table paging
+  useEffect(() => {
+    if (!filtersInitialized.current) return;
+    setPage(1);
+    fetchAppointments(1);
+  }, [pageSize, fetchAppointments]);
+
+  // charts
+  useEffect(() => {
+    if (!kpis || !summary) return;
+
+    console.log('KPIs:', kpis);
+    console.log('Summary daily sample:', summary.daily?.slice(0, 3));
+
     const timer = setTimeout(() => {
-      if (!mounted) return;
-      
-      // Safely dispose all existing charts
-      chartsRef.current.forEach((c) => {
-        try {
-          if (c && !c.isDisposed()) {
-            c.dispose();
-          }
-        } catch (e) {
-          // Silently ignore disposal errors
-        }
-      });
-      chartsRef.current = [];
+      charts.current.forEach((c) => { try { c.dispose(); } catch (_) {} });
+      charts.current = [];
 
-      // Render new charts only if containers still exist
-      if (mounted) {
-        if (refWaterfall.current) renderWaterfallChart(refWaterfall.current, chartsRef.current);
-        if (refEraStatus.current) renderEraChart(refEraStatus.current, kpis, chartsRef.current);
-        if (refEncountersWeekly.current) renderEncountersWeekly(refEncountersWeekly.current, appointmentsData, chartsRef.current);
-        if (refEncountersMonthly.current) renderEncountersMonthly(refEncountersMonthly.current, appointmentsData, chartsRef.current);
-        if (refNewPatientsWeekly.current) renderNewPatientsWeekly(refNewPatientsWeekly.current, chargesData, chartsRef.current);
-        if (refNewPatientsMonthly.current) renderNewPatientsMonthly(refNewPatientsMonthly.current, chargesData, chartsRef.current);
-        if (refProviderHours.current) renderProviderHours(refProviderHours.current, appointmentsData, chartsRef.current);
-        if (refArAging.current) renderArAging(refArAging.current, arAgingBuckets, chartsRef.current);
+      const ZOOM = [
+        { type: 'slider', bottom: 4, height: 16, borderColor: EC.border, fillerColor: 'rgba(1,69,105,.08)', handleStyle: { color: EC.accent }, labelFormatter: '' },
+        { type: 'inside' }
+      ];
 
-        resizeHandlerRef.current = createResizeHandler(chartsRef.current);
-        window.addEventListener('resize', resizeHandlerRef.current);
+      // ── Status Distribution (Pie) ──────────────────────────────────────────
+      if (refStatusDist.current) {
+        console.log('refStatusDist height:', refStatusDist.current.clientHeight);
+        const c = echarts.init(refStatusDist.current); charts.current.push(c);
+        const statusData = [
+          { name: 'Checked Out', value: kpis.checked_out,  itemStyle: { color: EC.accent } },
+          { name: 'No-show',     value: kpis.no_show,      itemStyle: { color: EC.danger } },
+          { name: 'Cancelled',   value: kpis.cancelled,    itemStyle: { color: EC.purple } },
+          { name: 'Rescheduled', value: kpis.rescheduled,  itemStyle: { color: EC.accent2 } },
+          { name: 'Pending',     value: kpis.pending,      itemStyle: { color: EC.accent3 } },
+        ];
+        const total = statusData.reduce((sum, item) => sum + item.value, 0);
+        c.setOption({
+          backgroundColor: 'transparent',
+          color: PROVIDER_STATUS_COLORS,
+          tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)', textStyle: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          legend: {
+            ...CHART_LEGEND_TOP_RIGHT,
+            orient: 'vertical',
+            formatter: (name: string) => {
+              const item = statusData.find((d) => d.name === name);
+              const pct = item && total ? ((item.value / total) * 100).toFixed(0) : '0';
+              return `${name}  (${pct}%)`;
+            }
+          },
+          series: [{
+            type: 'pie',
+            radius: ['52%', '78%'],
+            center: ['38%', '50%'],
+            data: statusData,
+            label: { show: true, formatter: '{b}: {c}', ...CHART_AXIS_TEXT_STYLE, color: EC.text },
+            emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,.2)' } }
+          }]
+        });
       }
+
+      // ── Status Waterfall ───────────────────────────────────────────────────
+      if (refStatusTrend.current) {
+        const c = echarts.init(refStatusTrend.current); charts.current.push(c);
+        const T   = Number(kpis.total       ?? 0);
+        const ns  = Number(kpis.no_show     ?? 0);
+        const can = Number(kpis.cancelled   ?? 0);
+        const res = Number(kpis.rescheduled ?? 0);
+        const co  = Number(kpis.checked_out ?? 0);
+
+        const categories  = ['Total', 'No Show', 'Cancelled', 'Rescheduled', 'Checkouts'];
+        const r1 = Math.max(0, T - ns);
+        const r2 = Math.max(0, T - ns - can);
+        const r3 = Math.max(0, T - ns - can - res);
+        const placeholders = [0, r1, r2, r3, 0];
+        const heights      = [T, ns, can, res, co];
+        const barColors    = [EC.accent, WF_NEG_RED, WF_NEG_RED, WF_NEG_RED, EC.accent];
+        const barTops      = [T, T, r1, r2, co];
+
+        const connectorData = [0, 1, 2, 3].map(
+          (i) => [i, i + 1, barTops[i + 1]] as [number, number, number]
+        );
+
+        c.setOption({
+          backgroundColor: 'transparent',
+          grid: { top: 36, right: 16, bottom: 48, left: 44 },
+          legend: { show: false },
+          tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            backgroundColor: '#fff',
+            borderColor: EC.border,
+            textStyle: { color: EC.text, fontSize: 12 },
+            formatter: (params: any) => {
+              const raw = Array.isArray(params) ? params : [params];
+              const seg = raw.find((p: any) => p.seriesName === 'Flow') ?? raw[0];
+              const i   = seg?.dataIndex ?? 0;
+              const h   = heights[i];
+              if (i === 0) return `<div style="font-weight:700">${categories[i]}</div>${fmt(T)}`;
+              if (i >= 1 && i <= 3) return `<div style="font-weight:700">${categories[i]}</div>−${fmt(h)}`;
+              return `<div style="font-weight:700">${categories[i]}</div>${fmt(co)}`;
+            },
+          },
+          xAxis: {
+            type: 'category',
+            data: categories,
+            axisLine: { show: false },
+            axisTick: { show: false },
+            axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text, interval: 0 },
+          },
+          yAxis: {
+            type: 'value',
+            axisLine: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text },
+          },
+          series: [
+            {
+              name: '_placeholder',
+              type: 'bar',
+              stack: 'status-wf',
+              silent: true,
+              data: placeholders,
+              itemStyle: { color: 'transparent' },
+              barWidth: 40,
+            },
+            {
+              name: 'Flow',
+              type: 'bar',
+              stack: 'status-wf',
+              barWidth: 40,
+              data: heights.map((h, i) => ({
+                value: h,
+                itemStyle: { color: barColors[i], borderRadius: [5, 5, 0, 0] },
+              })),
+              label: {
+                show: true,
+                position: 'top',
+                color: EC.text,
+                fontSize: 10,
+                fontWeight: 500,
+                formatter: (p: any) => {
+                  const i = p.dataIndex as number;
+                  const h = heights[i];
+                  if (i >= 1 && i <= 3) return `−${fmt(h)}`;
+                  return fmt(h);
+                },
+              },
+            },
+            {
+              type: 'custom',
+              silent: true,
+              data: connectorData,
+              renderItem: (_params: any, api: any) => {
+                const fromIndex = api.value(0) as number;
+                const toIndex   = api.value(1) as number;
+                const yVal      = api.value(2) as number;
+                const barHalfWidth = 20;
+                const fromPoint = api.coord([fromIndex, yVal]);
+                const toPoint   = api.coord([toIndex,   yVal]);
+                return {
+                  type: 'line',
+                  shape: {
+                    x1: fromPoint[0] + barHalfWidth,
+                    y1: fromPoint[1],
+                    x2: toPoint[0]   - barHalfWidth,
+                    y2: toPoint[1],
+                  },
+                  style: api.style({
+                    stroke: '#94a3b8',
+                    lineWidth: 1.5,
+                    lineDash: [4, 4],
+                  }),
+                  silent: true,
+                  z: 2,
+                };
+              },
+            },
+          ],
+        });
+      }
+
+      // ── Active Caseload (Weekly stacked bar) ──────────────────────────────
+      if (refCompletionVs.current) {
+        const c = echarts.init(refCompletionVs.current); charts.current.push(c);
+        const byWeek: Record<string, { checked: number; rescheduled: number }> = {};
+        for (const d of summary.daily ?? []) {
+          const key = isoWeekKey(d.appt_date);
+          byWeek[key] ??= { checked: 0, rescheduled: 0 };
+          byWeek[key].checked     += Number(d.checked_out  ?? 0);
+          byWeek[key].rescheduled += Number(d.rescheduled  ?? 0);
+        }
+        const weeks = Object.keys(byWeek).sort();
+        c.setOption({
+          backgroundColor: 'transparent',
+          grid: { top: 44, right: 12, bottom: 48, left: 36 },
+          // ── CHANGED: legend in a single horizontal row at top-right ──
+          legend: {
+            orient: 'horizontal',
+            top: 10,
+            right: 10,
+            itemWidth: 14,
+            itemHeight: 10,
+            itemGap: 16,
+            textStyle: { color: EC.text, fontSize: 11, fontWeight: 500, fontFamily: 'Montserrat, sans-serif' },
+          },
+          dataZoom: ZOOM,
+          xAxis: { data: weeks, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          yAxis: { axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 } },
+          series: [
+            {
+              name: 'Checked Out',
+              type: 'bar',
+              stack: 'total',
+              data: weeks.map((w) => byWeek[w].checked),
+              itemStyle: { color: EC.accent },
+              barMaxWidth: 36,
+              label: { show: true, position: 'inside', color: '#fff', fontSize: 10, fontWeight: 500, formatter: (p: any) => fmt(Number(p.value ?? 0)) },
+            },
+            {
+              name: 'Rescheduled',
+              type: 'bar',
+              stack: 'total',
+              data: weeks.map((w) => byWeek[w].rescheduled),
+              itemStyle: { color: EC.accent2, borderRadius: [5, 5, 0, 0] },
+              barMaxWidth: 36,
+              label: { show: true, position: 'inside', color: '#fff', fontSize: 10, fontWeight: 500, formatter: (p: any) => fmt(Number(p.value ?? 0)) },
+            },
+          ],
+        });
+      }
+
+      // ── Weekly Checkouts ──────────────────────────────────────────────────
+      if (refWeeklyChk.current) {
+        const c = echarts.init(refWeeklyChk.current); charts.current.push(c);
+        const byWeek: Record<string, number> = {};
+        for (const d of summary.daily ?? []) {
+          const week = isoWeekKey(d.appt_date);
+          byWeek[week] = (byWeek[week] ?? 0) + Number(d.checked_out ?? 0);
+        }
+        const weeks    = Object.keys(byWeek).sort();
+        const weekData = weeks.map((w) => byWeek[w]);
+        const targetLine = Number(
+          provider && providerTargets[provider]
+            ? providerTargets[provider].weekly_checkout_target
+            : 100
+        );
+        c.setOption({
+          backgroundColor: 'transparent',
+          grid: { top: 28, right: 12, bottom: 48, left: 36 },
+          legend: { show: false }, // ── CHANGED: removed legend ──
+          dataZoom: ZOOM,
+          xAxis: { data: weeks, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          yAxis: { axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 } },
+          series: [{
+            name: 'Checked Out',
+            type: 'bar',
+            data: weekData,
+            itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
+            barMaxWidth: 36,
+            label: {
+              show: true,
+              position: 'top',
+              color: EC.text,
+              fontSize: 10,
+              formatter: (p: any) => fmt(Number(p.value ?? 0)),
+            },
+            markLine: {
+              silent: true,
+              symbol: ['arrow', 'arrow'],
+              symbolSize: [8, 8],
+              lineStyle: { color: CHART_TARGET_LINE_GRAY, type: 'dashed', width: 1.5 },
+              label: { formatter: `Target ${targetLine}`, color: CHART_TARGET_LINE_GRAY, fontSize: 10, position: 'insideEndTop' },
+              data: [{ yAxis: targetLine }],
+            },
+          }],
+        });
+      }
+
+      // ── Monthly Checkouts ─────────────────────────────────────────────────
+      if (refMonthlyChk.current) {
+        const c = echarts.init(refMonthlyChk.current); charts.current.push(c);
+        const byMonth = new Map<string, number>();
+        for (const d of summary.daily ?? []) {
+          const month = d.appt_date.slice(0, 7);
+          byMonth.set(month, (byMonth.get(month) ?? 0) + Number(d.checked_out ?? 0));
+        }
+        const months    = Array.from(byMonth.keys()).sort();
+        const monthData = months.map((m) => byMonth.get(m) ?? 0);
+        const targetLine = Number(
+          provider && providerTargets[provider]
+            ? providerTargets[provider].monthly_checkout_target
+            : 100
+        );
+        if (months.length === 0) {
+          c.setOption({ backgroundColor: 'transparent', xAxis: { data: [] }, yAxis: {}, series: [] });
+        } else {
+          c.setOption({
+            backgroundColor: 'transparent',
+            grid: { top: 28, right: 12, bottom: 48, left: 36 },
+            legend: { show: false }, // ── CHANGED: removed legend ──
+            dataZoom: ZOOM,
+            xAxis: { data: months, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+            yAxis: { axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+            tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 } },
+            series: [{
+              name: 'Checked Out',
+              type: 'bar',
+              data: monthData,
+              itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
+              barMaxWidth: 36,
+              label: {
+                show: true,
+                position: 'top',
+                color: EC.text,
+                fontSize: 10,
+                formatter: (p: any) => fmt(Number(p.value ?? 0)),
+              },
+              markLine: {
+                silent: true,
+                symbol: ['arrow', 'arrow'],
+                symbolSize: [8, 8],
+                lineStyle: { color: CHART_TARGET_LINE_GRAY, type: 'dashed', width: 1.5 },
+                label: { formatter: `Target ${targetLine}`, color: CHART_TARGET_LINE_GRAY, fontSize: 10, position: 'insideEndTop' },
+                data: [{ yAxis: targetLine }],
+              },
+            }],
+          });
+        }
+      }
+
+      // ── No-show Rate % ────────────────────────────────────────────────────
+      if (refNoShowRate.current) {
+        const c = echarts.init(refNoShowRate.current); charts.current.push(c);
+        const weeks = Array.from(
+          new Set((summary.daily ?? []).map((d) => isoWeekKey(d.appt_date)))
+        ).sort();
+        const rates = weeks.map((w) => {
+          const items  = (summary.daily ?? []).filter((d) => isoWeekKey(d.appt_date) === w);
+          const total  = items.reduce((sum, d) => sum + Number(d.total   ?? 0), 0) || 1;
+          const noShow = items.reduce((sum, d) => sum + Number(d.no_show ?? 0), 0);
+          return Number(((noShow / total) * 100).toFixed(2));
+        });
+        const avg  = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+        const avgY = Number(avg.toFixed(2));
+        const peak = rates.length ? Math.max(...rates, avgY) : avgY;
+        const yMax = Math.min(100, Math.max(5, Math.ceil(peak * 1.18 + 2)));
+        c.setOption({
+          backgroundColor: 'transparent',
+          grid: { top: 40, right: 12, bottom: 48, left: 40 },
+          legend: { show: false }, // ── CHANGED: removed legend ──
+          dataZoom: ZOOM,
+          xAxis: { data: weeks, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text } },
+          yAxis: {
+            min: 0,
+            max: yMax,
+            axisLine: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text },
+          },
+          tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: EC.border, textStyle: { color: EC.text, fontSize: 12 } },
+          series: [{
+            type: 'line',
+            name: 'No-show %',
+            data: rates,
+            smooth: true,
+            symbol: 'circle',
+            symbolSize: 5,
+            lineStyle: { color: KPI_LINE_COLOR, width: 2.5 },
+            itemStyle: { color: KPI_LINE_COLOR },
+            label: {
+              show: true,
+              position: 'top',
+              color: EC.text,
+              fontSize: 10,
+              formatter: (p: any) => `${Number(p.value ?? 0).toFixed(1)}%`,
+            },
+            markLine: {
+              silent: true,
+              symbol: ['arrow', 'arrow'],
+              symbolSize: [8, 8],
+              lineStyle: { color: NS_AVG_LINE_DARK, type: 'dashed', width: 1.5 },
+              label: {
+                show: true,
+                formatter: `Avg ${avg.toFixed(1)}%`,
+                color: NS_AVG_LINE_DARK,
+                fontSize: 10,
+                fontWeight: 600,
+                position: 'insideStartTop',
+                distance: 2,
+              },
+              data: [{ yAxis: avgY }],
+            },
+          }],
+        });
+      }
+
+      // ── Daily Activity Heatmap — LeetCode/GitHub calendar style ─────────
+      // Each cell = one calendar date; X = week column, Y = Mon–Fri row
+      if (refHeatmap.current) {
+        const c = echarts.init(refHeatmap.current); charts.current.push(c);
+
+        const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
+        // Build a fast date → total lookup
+        const dailyMap = new Map<string, number>();
+        for (const r of heatmapDailyRows) dailyMap.set(r.appt_date, r.total);
+
+        // Find the Monday of the week that contains daysAgoStr(90)
+        const anchorDate = new Date(daysAgoStr(90) + 'T00:00:00');
+        const offsetToMonday = (anchorDate.getDay() + 6) % 7; // 0=Mon
+        anchorDate.setDate(anchorDate.getDate() - offsetToMonday);
+
+        const today = new Date(todayStr() + 'T00:00:00');
+
+        // Build week columns + data points + month-key per column
+        const weekLabels: string[]    = [];
+        const weekMonthKeys: string[] = []; // e.g. "Jan-26" per week column
+        const calData: [number, number, number, string][] = []; // [weekIdx, wdIdx, count, dateStr]
+
+        let weekIdx = 0;
+        const cur = new Date(anchorDate);
+
+        const toMonthKey = (d: Date) =>
+          d.toLocaleDateString('en-US', { month: 'short' }) + '-' + String(d.getFullYear()).slice(2);
+
+        while (cur <= today) {
+          const mondayOfWeek = new Date(cur);
+          weekLabels.push(
+            mondayOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          );
+          weekMonthKeys.push(toMonthKey(mondayOfWeek));
+          for (let wd = 0; wd < 5; wd++) {
+            const cellDate = new Date(cur);
+            cellDate.setDate(cur.getDate() + wd);
+            if (cellDate > today) break; // don't render future cells
+            const dateStr = cellDate.toISOString().split('T')[0];
+            calData.push([weekIdx, wd, dailyMap.get(dateStr) ?? 0, dateStr]);
+          }
+          weekIdx++;
+          cur.setDate(cur.getDate() + 7);
+        }
+
+        // Percentage-based colour thresholds (relative to max count in window)
+        const maxCount = calData.reduce((m, x) => Math.max(m, x[2]), 1);
+        // Convert % boundaries → raw count thresholds for visualMap dimension:2
+        const p80 = Math.round(maxCount * 0.80); // > 80 %
+        const p60 = Math.round(maxCount * 0.60); // 60–79 %
+        const p40 = Math.round(maxCount * 0.40); // 40–59 %
+        const p20 = Math.round(maxCount * 0.20); // 20–39 %
+        //                                          0–19 % → rest
+
+        const hmPieces = [
+          { min: p80,              color: '#014569', label: '> 80%'    }, // dark navy
+          { min: p60, max: p80 - 1, color: '#0f766e', label: '60–79%'  }, // dark teal
+          { min: p40, max: p60 - 1, color: '#5eead4', label: '40–59%'  }, // light teal
+          { min: p20, max: p40 - 1, color: '#4b5563', label: '20–39%'  }, // dark gray
+          { max: p20 - 1,           color: '#d1d5db', label: '< 20%'   }, // light gray
+        ];
+
+        c.setOption({
+          backgroundColor: 'transparent',
+          grid: { top: 8, right: 110, bottom: 40, left: 44 },
+          xAxis: {
+            type: 'category',
+            data: weekLabels,
+            axisLine: { show: false },
+            axisTick: { show: false },
+            // Vertical separator lines between months
+            splitLine: {
+              show: true,
+              interval: (index: number) =>
+                index > 0 && weekMonthKeys[index] !== weekMonthKeys[index - 1],
+              lineStyle: { color: '#cbd5e1', width: 2, type: 'solid' },
+            },
+            axisLabel: {
+              ...CHART_AXIS_TEXT_STYLE,
+              color: EC.text,
+              fontWeight: 600,
+              fontSize: 11,
+              interval: 0, // evaluate every tick
+              // Show "Jan-26" only at the first week of each new month
+              formatter: (_val: string, index: number) => {
+                if (index === 0 || weekMonthKeys[index] !== weekMonthKeys[index - 1]) {
+                  return weekMonthKeys[index];
+                }
+                return '';
+              },
+            },
+          },
+          yAxis: {
+            type: 'category',
+            data: DAY_LABELS,
+            inverse: true,           // Mon at top, Fri at bottom
+            axisLine: { show: false },
+            axisTick: { show: false },
+            axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text },
+          },
+          visualMap: {
+            show: true,
+            type: 'piecewise',
+            orient: 'vertical',
+            right: 6,
+            top: 'center',
+            itemWidth: 12,
+            itemHeight: 12,
+            itemGap: 8,
+            textStyle: { color: EC.text, fontSize: 10, fontFamily: 'Montserrat, sans-serif' },
+            pieces: hmPieces,
+            dimension: 2,            // map on raw appointment count (index 2)
+          },
+          tooltip: {
+            formatter: (p: any) => {
+              const [, wd, count, dateStr] = p.value as [number, number, number, string];
+              const label = DAY_LABELS[wd] ?? '';
+              const formatted = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+              });
+              return `<b>${label}, ${formatted}</b><br/>${count} appointment${count !== 1 ? 's' : ''}`;
+            },
+            backgroundColor: '#fff',
+            borderColor: EC.border,
+            textStyle: { color: EC.text, fontSize: 12 },
+          },
+          series: [{
+            type: 'heatmap',
+            data: calData,
+            itemStyle: { borderRadius: 4, borderWidth: 3, borderColor: '#fff' },
+            emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(0,0,0,.2)' } },
+          }],
+        });
+      }
+
+      const handleResize = () => charts.current.forEach((ch) => { try { ch.resize(); } catch (_) {} });
+      window.addEventListener('resize', handleResize);
+      (window as any).currentResizeHandler = handleResize;
     }, 0);
 
     return () => {
-      mounted = false;
       clearTimeout(timer);
-      if (resizeHandlerRef.current) window.removeEventListener('resize', resizeHandlerRef.current);
-      // Don't dispose charts on unmount - React will handle DOM cleanup
+      if ((window as any).currentResizeHandler) {
+        window.removeEventListener('resize', (window as any).currentResizeHandler);
+        (window as any).currentResizeHandler = null;
+      }
     };
-  }, [loading, summary, payerBreakdown, kpis, appointmentsData, chargesData, arAgingBuckets]);
+  }, [summary, kpis, provider, providerTargets, heatmapDailyRows]);
 
-  /* ── CHART RENDER FUNCTIONS ── */
-  const renderWaterfallChart = (container: HTMLDivElement, chartsArray: echarts.ECharts[]): void => {
-    const chart = echarts.init(container);
-    chartsArray.push(chart);
+  // Actions
+  function applyFilters() { setPage(1); fetchSummaryAndAppointments({ resetPage: true }); }
+  function clearFilters() { setDateFrom(weeksAgoStr(4)); setDateTo(todayStr()); setProvider(''); setPageSize(50); setPage(1); fetchSummaryAndAppointments({ resetPage: true }); }
 
-    /*
-     * Proper ECharts waterfall — 4 bars, stacked with a transparent placeholder
-     *
-     * Running totals:
-     *   t0 = openingAr
-     *   t1 = t0 + chargesGenerated
-     *   t2 = t1 - paymentReceived (ERA total)  → closing / outstanding AR
-     */
-    const t0 = kpis.openingAr;
-    const t1 = t0 + kpis.chargesGenerated;
-    const t2 = t1 - kpis.paymentReceived; // closing / outstanding AR
-
-    const categories = [
-      'Opening AR',
-      'Billing in Period',
-      'Payment Received',
-      'Closing AR',
-    ];
-
-    // Invisible placeholder bases
-    const placeholders = [0, t0, t2, 0];
-
-    // Actual bar heights (always positive — direction comes from color + placeholder)
-    const heights = [
-      t0,                       // Opening AR       ↑ (increase from 0)
-      kpis.chargesGenerated,    // Charges          ↑ (increase from t0)
-      kpis.paymentReceived,     // Payment Received ↓ (decrease, ERA total)
-      t2,                       // Closing AR  (total, from 0)
-    ];
-
-    // True values for tooltip
-    const trueVals = [t0, kpis.chargesGenerated, -kpis.paymentReceived, t2];
-
-    const barColors = [
-      EC.accent,
-      EC.accent,
-      EC.wfNeg,
-      EC.accent,
-    ];
-
-    chart.setOption({
-      backgroundColor: 'transparent',
-      grid: { top: 48, right: 20, bottom: 64, left: 72 },
-      dataZoom: CHART_DATA_ZOOM,
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        ...TOOLTIP_COMMON,
-        formatter: (params: any) => {
-          const i = params[0]?.dataIndex ?? 0;
-          const sign = trueVals[i] < 0 ? '−' : '';
-          return `<div style="font-weight:700;margin-bottom:3px">${categories[i]}</div>${sign}${fmt(Math.abs(trueVals[i]))}`;
-        },
-      },
-      xAxis: {
-        type: 'category',
-        data: categories,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          color: CHART_AXIS_MUTED,
-          fontSize: 10.5,
-          fontWeight: 500,
-          interval: 0,
-          // wrap long labels
-          formatter: (v: string) => v.replace(' ', '\n'),
-        },
-      },
-      yAxis: {
-        type: 'value',
-        axisLine: { show: false },
-        axisTick: { show: false },
-        // ── remove all horizontal grid lines ──
-        splitLine: { show: false },
-        axisLabel: {
-          color: CHART_AXIS_MUTED,
-          fontSize: 10,
-          formatter: (v: number) =>
-            v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`,
-        },
-      },
-      series: [
-        {
-          // Transparent placeholder — lifts each bar to the right starting height
-          name: '_placeholder',
-          type: 'bar',
-          stack: 'wf',
-          silent: true,
-          data: placeholders,
-          itemStyle: { color: 'transparent' },
-          barWidth: 42,
-        },
-        {
-          // Actual visible bars
-          name: 'AR',
-          type: 'bar',
-          stack: 'wf',
-          barWidth: 42,
-          data: heights.map((h, i) => ({
-            value: h,
-            itemStyle: {
-              color: barColors[i],
-              borderRadius: [5, 5, 0, 0],
-            },
-          })),
-          label: {
-            show: true,
-            position: 'top',
-            fontSize: 10.5,
-            fontWeight: 700,
-            color: EC.text,
-            formatter: (p: any) => {
-              const v = trueVals[p.dataIndex];
-              const sign = v < 0 ? '−' : '';
-              return `${sign}${fmt(Math.abs(v))}`;
-            },
-          },
-        },
-      ],
-    });
-  };
-
-  const renderEraChart = (container: HTMLDivElement, data: typeof kpis, chartsArray: echarts.ECharts[]): void => {
-    const chart = echarts.init(container);
-    chartsArray.push(chart);
-
-    const charged = data.checkoutChargeEraCount + data.checkoutChargeNoEraCount;
-    const pieData = [
-      { name: 'Charges', value: charged, itemStyle: { color: EC.accent } },
-      { name: 'ERA Approved', value: data.checkoutChargeEraCount, itemStyle: { color: EC.accent2 } },
-      { name: 'Missing ERA', value: data.checkoutChargeNoEraCount, itemStyle: { color: EC.danger } },
-    ];
-
-    chart.setOption({
-      backgroundColor: 'transparent',
-      color: [EC.accent, EC.accent2, EC.danger],
-      tooltip: {
-        trigger: 'item',
-        ...TOOLTIP_COMMON,
-        formatter: (p: any) => `<div style="font-weight:700">${p.name}</div>${p.value}`,
-      },
-      legend: { bottom: 0, textStyle: { color: CHART_AXIS_MUTED, fontSize: 11 } },
-      series: [
-        {
-          type: 'pie',
-          radius: ['46%', '74%'],
-          center: ['50%', '45%'],
-          data: pieData,
-          label: { formatter: '{b}: {c}', color: EC.text, fontSize: 11 },
-          labelLine: { length: 8, length2: 8 },
-          emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,.2)' } },
-        },
-      ],
-    });
-  };
-
-  /* ═══════════════════ NEW CHART FUNCTIONS ═══════════════════ */
-
-  const renderEncountersWeekly = (container: HTMLDivElement, appointments: Appointment[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container || !appointments.length) return;
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const weeklyTotals = new Map<string, number>();
-      for (const appt of appointments) {
-        if (!appt.appt_date || normalizeAppointmentStatus(appt.status) !== 'checked_out') continue;
-        const date = new Date(`${appt.appt_date}T12:00:00`);
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay());
-        const weekKey = weekStart.toISOString().split('T')[0];
-        weeklyTotals.set(weekKey, (weeklyTotals.get(weekKey) || 0) + 1);
-      }
-
-      const weeks = Array.from(weeklyTotals.keys()).sort();
-      const values = weeks.map((w) => weeklyTotals.get(w) || 0);
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', ...TOOLTIP_COMMON },
-        grid: OD_BAR_GRID,
-        dataZoom: CHART_DATA_ZOOM,
-        xAxis: {
-          type: 'category',
-          data: weeks,
-          axisLine: { show: false },
-          axisTick: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        yAxis: {
-          type: 'value',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        series: [
-          {
-            name: 'Checkouts',
-            type: 'bar',
-            data: values,
-            itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
-            barMaxWidth: 36,
-            label: {
-              show: true,
-              position: 'top',
-              color: EC.text,
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: (p: any) => fmtCount(Number(p.value ?? 0)),
-            },
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering encounters weekly chart:', error);
-    }
-  };
-
-  const renderEncountersMonthly = (container: HTMLDivElement, appointments: Appointment[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container || !appointments.length) return;
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const monthlyTotals = new Map<string, number>();
-      for (const appt of appointments) {
-        if (!appt.appt_date || normalizeAppointmentStatus(appt.status) !== 'checked_out') continue;
-        const date = new Date(`${appt.appt_date}T12:00:00`);
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + 1);
-      }
-
-      const months = Array.from(monthlyTotals.keys()).sort();
-      const values = months.map((m) => monthlyTotals.get(m) || 0);
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', ...TOOLTIP_COMMON },
-        grid: OD_BAR_GRID,
-        dataZoom: CHART_DATA_ZOOM,
-        xAxis: {
-          type: 'category',
-          data: months,
-          axisLine: { show: false },
-          axisTick: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        yAxis: {
-          type: 'value',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        series: [
-          {
-            name: 'Checkouts',
-            type: 'bar',
-            data: values,
-            itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
-            barMaxWidth: 36,
-            label: {
-              show: true,
-              position: 'top',
-              color: EC.text,
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: (p: any) => fmtCount(Number(p.value ?? 0)),
-            },
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering encounters monthly chart:', error);
-    }
-  };
-
-  const renderNewPatientsWeekly = (container: HTMLDivElement, charges: any[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container || !charges.length) return;
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const weeklyTotals = new Map<string, number>();
-      for (const charge of charges) {
-        if (charge.cpt_code !== '90791' || !charge.service_date) continue;
-        const date = new Date(`${charge.service_date}T12:00:00`);
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay());
-        const weekKey = weekStart.toISOString().split('T')[0];
-        weeklyTotals.set(weekKey, (weeklyTotals.get(weekKey) || 0) + 1);
-      }
-
-      const weeks = Array.from(weeklyTotals.keys()).sort();
-      const values = weeks.map((w) => weeklyTotals.get(w) || 0);
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', ...TOOLTIP_COMMON },
-        grid: OD_BAR_GRID,
-        dataZoom: CHART_DATA_ZOOM,
-        xAxis: {
-          type: 'category',
-          data: weeks,
-          axisLine: { show: false },
-          axisTick: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        yAxis: {
-          type: 'value',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        series: [
-          {
-            name: 'New patients',
-            type: 'bar',
-            data: values,
-            itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
-            barMaxWidth: 36,
-            label: {
-              show: true,
-              position: 'top',
-              color: EC.text,
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: (p: any) => fmtCount(Number(p.value ?? 0)),
-            },
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering new patients weekly chart:', error);
-    }
-  };
-
-  const renderNewPatientsMonthly = (container: HTMLDivElement, charges: any[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container || !charges.length) return;
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const monthlyTotals = new Map<string, number>();
-      for (const charge of charges) {
-        if (charge.cpt_code !== '90791' || !charge.service_date) continue;
-        const date = new Date(`${charge.service_date}T12:00:00`);
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + 1);
-      }
-
-      const months = Array.from(monthlyTotals.keys()).sort();
-      const values = months.map((m) => monthlyTotals.get(m) || 0);
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', ...TOOLTIP_COMMON },
-        grid: OD_BAR_GRID,
-        dataZoom: CHART_DATA_ZOOM,
-        xAxis: {
-          type: 'category',
-          data: months,
-          axisLine: { show: false },
-          axisTick: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        yAxis: {
-          type: 'value',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: { color: CHART_AXIS_MUTED, fontSize: 10 },
-        },
-        series: [
-          {
-            name: 'New patients',
-            type: 'bar',
-            data: values,
-            itemStyle: { color: EC.accent, borderRadius: [5, 5, 0, 0] },
-            barMaxWidth: 36,
-            label: {
-              show: true,
-              position: 'top',
-              color: EC.text,
-              fontSize: 10,
-              fontWeight: 700,
-              formatter: (p: any) => fmtCount(Number(p.value ?? 0)),
-            },
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering new patients monthly chart:', error);
-    }
-  };
-
-  const renderProviderHours = (container: HTMLDivElement, appointments: Appointment[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container || !appointments.length) return;
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const counts = new Map<string, number>();
-      for (const appt of appointments) {
-        const name = (appt.provider_name || 'Unknown').trim() || 'Unknown';
-        counts.set(name, (counts.get(name) || 0) + 1);
-      }
-
-      const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-      const total = sorted.reduce((s, [, v]) => s + v, 0);
-      if (total <= 0) return;
-
-      const topN = 4;
-      const hasRest = sorted.length > topN;
-      const mainSlices = hasRest ? sorted.slice(0, topN) : sorted;
-      const rest = hasRest ? sorted.slice(topN) : [];
-      const otherSum = rest.reduce((s, [, v]) => s + v, 0);
-
-      const mainData = mainSlices.map(([name, value], i) => ({
-        name,
-        value,
-        itemStyle: { color: PROVIDER_STATUS_COLORS[i % PROVIDER_STATUS_COLORS.length] },
-      }));
-      if (hasRest && otherSum > 0) {
-        mainData.push({
-          name: 'Other',
-          value: otherSum,
-          itemStyle: { color: EC.grey },
-        });
-      }
-
-      const tooltipFmt = (p: any) => {
-        const pct = total ? ((Number(p.value) / total) * 100).toFixed(1) : '0';
-        return `<div style="font-weight:700">${p.name}</div>${fmtCount(Number(p.value))} (${pct}%)`;
-      };
-
-      /* Labels live in HTML beside chart — avoids overlap between pies / under charts */
-      const pieEmphasis = { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.15)' } };
-
-      const sliceBorder = {
-        borderColor: '#fff',
-        borderWidth: 2,
-        borderRadius: 3,
-      };
-
-      const emptyLabel = { show: false };
-      const emptyLabelLine = { show: false };
-
-      if (!hasRest) {
-        chart.setOption({
-          backgroundColor: 'transparent',
-          color: PROVIDER_STATUS_COLORS,
-          tooltip: { trigger: 'item', ...TOOLTIP_COMMON, formatter: tooltipFmt },
-          series: [
-            {
-              name: 'Appointments',
-              type: 'pie',
-              radius: ['42%', '70%'],
-              center: ['50%', '50%'],
-              padAngle: 1,
-              data: mainData.map((d) => ({
-                ...d,
-                itemStyle: { ...d.itemStyle, ...sliceBorder },
-              })),
-              label: emptyLabel,
-              labelLine: emptyLabelLine,
-              emphasis: pieEmphasis,
-            },
-          ],
-        });
-        return;
-      }
-
-      const subData = rest.map(([name, value], i) => ({
-        name: name.length > 20 ? `${name.slice(0, 18)}…` : name,
-        value,
-        itemStyle: { color: PROVIDER_STATUS_COLORS[(i + 1) % PROVIDER_STATUS_COLORS.length] },
-      }));
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        color: PROVIDER_STATUS_COLORS,
-        tooltip: { trigger: 'item', ...TOOLTIP_COMMON, formatter: tooltipFmt },
-        series: [
-          {
-            name: 'All providers',
-            type: 'pie',
-            radius: [0, '50%'],
-            center: ['36%', '50%'],
-            padAngle: 1,
-            data: mainData.map((d) => ({
-              ...d,
-              itemStyle: { ...d.itemStyle, ...sliceBorder },
-            })),
-            label: emptyLabel,
-            labelLine: emptyLabelLine,
-            emphasis: pieEmphasis,
-          },
-          {
-            name: 'Other detail',
-            type: 'pie',
-            radius: [0, '38%'],
-            center: ['72%', '50%'],
-            padAngle: 1,
-            data: subData.map((d) => ({
-              ...d,
-              itemStyle: { ...d.itemStyle, ...sliceBorder },
-            })),
-            label: emptyLabel,
-            labelLine: emptyLabelLine,
-            emphasis: pieEmphasis,
-          },
-        ],
-        graphic: [
-          {
-            type: 'line',
-            shape: { x1: 0, y1: 0, x2: 36, y2: 0 },
-            style: { stroke: EC.border, lineWidth: 1.5 },
-            left: '54%',
-            top: '50%',
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering provider hours chart:', error);
-    }
-  };
-
-  const renderArAging = (container: HTMLDivElement, rows: ReconAgingBucketItem[], chartsArray: echarts.ECharts[]): void => {
-    try {
-      if (!container) return;
-      const merged = mergeArAgingBuckets(rows);
-      const totalBal = merged.reduce((s, b) => s + b.balance, 0);
-      const totalCt = merged.reduce((s, b) => s + b.count, 0);
-      if (totalBal === 0 && totalCt === 0) return;
-
-      const chart = echarts.init(container, null, { renderer: 'canvas' });
-      chartsArray.push(chart);
-
-      const categories = merged.map((b) => b.bucket);
-      const balances = merged.map((b) => b.balance);
-
-      chart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: {
-          trigger: 'axis',
-          axisPointer: { type: 'shadow' },
-          ...TOOLTIP_COMMON,
-          formatter: (params: any) => {
-            const p = Array.isArray(params) ? params[0] : params;
-            const i = p?.dataIndex ?? 0;
-            const row = merged[i];
-            return `<div style="font-weight:700">${row.bucket}</div>`
-              + `${fmt(row.balance)} outstanding<br/><span style="color:${CHART_AXIS_MUTED};font-size:11px">${row.count} claims</span>`;
-          },
-        },
-        grid: { left: 52, right: 24, top: 8, bottom: 8 },
-        xAxis: {
-          type: 'value',
-          axisLine: { show: false },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: {
-            color: CHART_AXIS_MUTED,
-            fontSize: 10,
-            formatter: (v: number) => (Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`),
-          },
-        },
-        yAxis: {
-          type: 'category',
-          data: categories,
-          inverse: true,
-          axisLine: { show: true, lineStyle: { color: EC.border } },
-          axisTick: { show: false },
-          axisLabel: { color: EC.text, fontSize: 11 },
-        },
-        series: [
-          {
-            type: 'bar',
-            data: balances.map((bal, i) => ({
-              value: bal,
-              itemStyle: {
-                color: PROVIDER_STATUS_COLORS[i % PROVIDER_STATUS_COLORS.length],
-                borderRadius: [0, 4, 4, 0],
-              },
-            })),
-            barMaxWidth: 28,
-            label: {
-              show: true,
-              position: 'insideLeft',
-              color: '#fff',
-              fontSize: 11,
-              fontWeight: 700,
-              formatter: (p: any) => {
-                const v = Number(p.value ?? 0);
-                return Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(1)}k` : fmt(v);
-              },
-            },
-          },
-        ],
-      });
-    } catch (error) {
-      console.error('Error rendering AR aging chart:', error);
-    }
-  };
+  const rangePill = dateFrom && dateTo ? `📅 ${dateFrom} – ${dateTo}` : '📅 All dates';
+  const selectedProviderName = provider ? providers.find((p) => String(p.id) === provider)?.name ?? 'Provider' : undefined;
 
   /* ═══════════════════ EXPORT HELPERS ═══════════════════ */
-  const CHART_TITLES_OD = ['AR Waterfall', 'Checkout–Charge–ERA Status'];
-
-  function buildOdFilterContext(): ExportFilterContext {
+  function buildFilterContext(): ExportFilterContext {
     return {
-      dashboardName: 'Operational Dashboard',
+      dashboardName: 'Provider Dashboard',
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
+      providerName: selectedProviderName,
     };
   }
 
-  function buildOdKpis(): KpiEntry[] {
+  function buildKpis(): KpiEntry[] {
+    if (!kpis) return [];
     return [
-      { label: 'Opening AR', value: fmt(kpis.openingAr) },
-      { label: 'Charges Generated', value: fmt(kpis.chargesGenerated) },
-      { label: 'Payment Received (ERA)', value: fmt(kpis.paymentReceived) },
-      { label: 'Outstanding AR', value: fmt(kpis.outstandingAr), sub: kpis.outstandingTrendLabel },
-      { label: 'Checkout (No Charge)', value: String(kpis.checkoutNoChargeCount) },
-      { label: 'Charge (No ERA)', value: String(kpis.checkoutChargeNoEraCount) },
-      { label: 'Charge + ERA', value: String(kpis.checkoutChargeEraCount) },
+      { label: 'Total Appointments', value: fmt(kpis.total), sub: pctAgainstTotal(kpis.total, kpis.total) },
+      { label: 'Checked Out', value: fmt(kpis.checked_out), sub: pctAgainstTotal(kpis.checked_out, kpis.total) },
+      { label: 'No-shows', value: fmt(kpis.no_show), sub: pctAgainstTotal(kpis.no_show, kpis.total) },
+      { label: 'Cancelled', value: fmt(kpis.cancelled), sub: pctAgainstTotal(kpis.cancelled, kpis.total) },
+      { label: 'Rescheduled', value: fmt(kpis.rescheduled), sub: pctAgainstTotal(kpis.rescheduled, kpis.total) },
+      { label: 'Pending', value: fmt(kpis.pending) },
     ];
   }
 
-  function buildPayerSheet(): TableSheet {
-    const total = payerBreakdown.reduce((s, p) => s + p.cash_collected_mapped_amount, 0);
+  function buildDailySheet(): TableSheet {
     return {
-      sheetName: 'Payer Breakdown',
-      headers: ['Insurance Payer', 'Amount Received', '% of Total'],
-      rows: payerBreakdown.map((p) => [
-        p.payer_name,
-        p.cash_collected_mapped_amount,
-        total > 0 ? `${((p.cash_collected_mapped_amount / total) * 100).toFixed(1)}%` : '0%',
+      sheetName: 'Daily Data',
+      headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+      rows: (summary?.daily ?? []).map((d) => [
+        d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
       ]),
     };
   }
 
-  function buildReconSheet(): TableSheet {
+  function buildHeatmapSheet(): TableSheet {
     return {
-      sheetName: 'Recon Summary',
-      headers: ['Status', 'Count', 'Billed', 'Paid', 'Balance'],
-      rows: (summary?.rows ?? []).map((r) => [
-        r.status, r.count, r.billed, r.paid, r.balance,
-      ]),
+      sheetName: 'Heatmap Data',
+      headers: ['Date', 'Day', 'Total Appointments'],
+      rows: heatmapDailyRows.map((r) => {
+        const wd = (new Date(r.appt_date + 'T00:00:00').getDay() + 6) % 7;
+        const dayName = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][wd] ?? '';
+        return [r.appt_date, dayName, r.total];
+      }),
     };
   }
 
-  async function handleOdExportExcel(id: string) {
-    setExportLoading(true);
-    setExportLoadingId(id);
+  async function handleExportExcel(id: string) {
+    setExportLoading(true); setExportLoadingId(id);
     try {
-      await exportToExcel({
-        filters: buildOdFilterContext(),
-        kpis: buildOdKpis(),
-        sheets: [buildPayerSheet(), buildReconSheet()],
-      });
-    } finally {
-      setExportLoading(false);
-      setExportLoadingId(null);
-    }
+      await exportToExcel({ filters: buildFilterContext(), kpis: buildKpis(), sheets: [buildDailySheet(), buildHeatmapSheet()] });
+    } finally { setExportLoading(false); setExportLoadingId(null); }
   }
 
-  async function handleOdExportPdf(id: string) {
-    setExportLoading(true);
-    setExportLoadingId(id);
+  async function handleExportPdf(id: string) {
+    setExportLoading(true); setExportLoadingId(id);
     try {
-      const chartImages = captureChartImages(chartsRef.current, CHART_TITLES_OD);
-      const total = payerBreakdown.reduce((s, p) => s + p.cash_collected_mapped_amount, 0);
+      const chartImages = captureChartImages(charts.current, CHART_TITLES);
       exportToPdf({
-        filters: buildOdFilterContext(),
-        kpis: buildOdKpis(),
+        filters: buildFilterContext(),
+        kpis: buildKpis(),
         charts: chartImages,
-        tables: [
-          {
-            title: 'Insurance Payer Bank Receipts',
-            headers: ['Payer', 'Amount Received', '% of Total'],
-            rows: payerBreakdown.map((p) => [
-              p.payer_name,
-              fmt(p.cash_collected_mapped_amount),
-              total > 0 ? `${((p.cash_collected_mapped_amount / total) * 100).toFixed(1)}%` : '0%',
-            ]),
-          },
-        ],
+        tables: [{ title: 'Daily Appointment Data', headers: buildDailySheet().headers, rows: buildDailySheet().rows }],
       });
-    } finally {
-      setExportLoading(false);
-      setExportLoadingId(null);
-    }
+    } finally { setExportLoading(false); setExportLoadingId(null); }
   }
 
-  async function handleOdProviderWise(id: string) {
-    setExportLoading(true);
-    setExportLoadingId(id);
+  async function handleExportProviderWise(id: string) {
+    setExportLoading(true); setExportLoadingId(id);
     try {
-      const provSummaries = await getProviderSummary({
-        start_date: dateFrom || undefined,
-        end_date: dateTo || undefined,
-      });
-      const providerData = provSummaries.map((ps) => ({
-        name: ps.provider_name,
-        kpis: [
-          { label: 'Appointments', value: ps.appointment_count },
-          { label: 'Billed', value: fmt(ps.billed) },
-          { label: 'Paid', value: fmt(ps.paid) },
-          { label: 'Collection Rate', value: `${ps.collection_rate.toFixed(1)}%` },
-        ] as KpiEntry[],
-        sheet: {
-          sheetName: 'Summary',
-          headers: ['Metric', 'Value'],
-          rows: [
-            ['Appointments', ps.appointment_count],
-            ['Billed', ps.billed],
-            ['Paid', ps.paid],
-            ['Balance', ps.billed - ps.paid],
-            ['Collection Rate', `${ps.collection_rate.toFixed(1)}%`],
+      const providerData: { name: string; kpis: KpiEntry[]; sheet: TableSheet }[] = [];
+      for (const prov of providers) {
+        const provSummary = await getAppointmentSummary({
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          provider: String(prov.id),
+        });
+        const pk = provSummary.kpis;
+        providerData.push({
+          name: prov.name,
+          kpis: [
+            { label: 'Total',       value: pk.total },
+            { label: 'Checked Out', value: pk.checked_out, sub: `${pk.checkout_rate.toFixed(1)}%` },
+            { label: 'No-show',     value: pk.no_show,     sub: `${pk.noshow_rate.toFixed(2)}%`  },
+            { label: 'Cancelled',   value: pk.cancelled },
+            { label: 'Rescheduled', value: pk.rescheduled },
+            { label: 'Pending',     value: pk.pending },
           ],
-        } as TableSheet,
-      }));
-
-      await exportProviderWiseExcel({
-        filters: buildOdFilterContext(),
-        providers: providerData,
-      });
-    } finally {
-      setExportLoading(false);
-      setExportLoadingId(null);
-    }
-  }
-
-  async function handleOdAllProviders(id: string) {
-    setExportLoading(true);
-    setExportLoadingId(id);
-    try {
-      const provSummaries = await getProviderSummary({
-        start_date: dateFrom || undefined,
-        end_date: dateTo || undefined,
-      });
-      await exportToExcel({
-        filters: { ...buildOdFilterContext(), providerName: 'All Providers' },
-        kpis: buildOdKpis(),
-        sheets: [
-          {
-            sheetName: 'Provider Summary',
-            headers: ['Provider', 'Appointments', 'Billed', 'Paid', 'Balance', 'Collection Rate'],
-            rows: provSummaries.map((ps) => [
-              ps.provider_name,
-              ps.appointment_count,
-              ps.billed,
-              ps.paid,
-              ps.billed - ps.paid,
-              `${ps.collection_rate.toFixed(1)}%`,
+          sheet: {
+            sheetName: 'Daily',
+            headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+            rows: provSummary.daily.map((d) => [
+              d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
             ]),
           },
-          buildPayerSheet(),
-          buildReconSheet(),
+        });
+      }
+      await exportProviderWiseExcel({ filters: buildFilterContext(), providers: providerData });
+    } finally { setExportLoading(false); setExportLoadingId(null); }
+  }
+
+  async function handleExportAllProviders(id: string) {
+    setExportLoading(true); setExportLoadingId(id);
+    try {
+      const allSummary = await getAppointmentSummary({ date_from: dateFrom || undefined, date_to: dateTo || undefined });
+      const ak = allSummary.kpis;
+      await exportToExcel({
+        filters: { ...buildFilterContext(), providerName: 'All Providers' },
+        kpis: [
+          { label: 'Total',       value: ak.total },
+          { label: 'Checked Out', value: ak.checked_out, sub: `${ak.checkout_rate.toFixed(1)}%` },
+          { label: 'No-show',     value: ak.no_show,     sub: `${ak.noshow_rate.toFixed(2)}%`  },
+          { label: 'Cancelled',   value: ak.cancelled },
+          { label: 'Rescheduled', value: ak.rescheduled },
+          { label: 'Pending',     value: ak.pending },
         ],
-        filename: `Operational_Dashboard_AllProviders_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        sheets: [{
+          sheetName: 'Daily Data (All)',
+          headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+          rows: allSummary.daily.map((d) => [
+            d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
+          ]),
+        }],
+        filename: `Provider_Dashboard_AllProviders_${new Date().toISOString().slice(0, 10)}.xlsx`,
       });
-    } finally {
-      setExportLoading(false);
-      setExportLoadingId(null);
-    }
+    } finally { setExportLoading(false); setExportLoadingId(null); }
   }
 
   const exportSections: ExportSection[] = [
     {
       title: 'Current View',
       options: [
-        { id: 'od-cv-excel', label: 'Excel (.xlsx)', icon: '📊', description: 'KPIs + payer table + recon', onClick: () => handleOdExportExcel('od-cv-excel') },
-        { id: 'od-cv-pdf', label: 'PDF Report', icon: '📄', description: 'KPIs + charts + payer table', onClick: () => handleOdExportPdf('od-cv-pdf') },
+        { id: 'cv-excel', label: 'Excel (.xlsx)', icon: '📊', description: 'KPIs + daily data',       onClick: () => handleExportExcel('cv-excel') },
+        { id: 'cv-pdf',   label: 'PDF Report',    icon: '📄', description: 'KPIs + charts + data',    onClick: () => handleExportPdf('cv-pdf')   },
       ],
     },
     {
       title: 'Provider-wise',
       options: [
-        { id: 'od-pw-excel', label: 'Excel (.xlsx)', icon: '👥', description: 'One sheet per provider', onClick: () => handleOdProviderWise('od-pw-excel') },
+        { id: 'pw-excel', label: 'Excel (.xlsx)', icon: '👥', description: 'One sheet per provider',  onClick: () => handleExportProviderWise('pw-excel') },
       ],
     },
     {
       title: 'All Providers',
       options: [
-        { id: 'od-all-excel', label: 'Excel (.xlsx)', icon: '📋', description: 'Combined data dump', onClick: () => handleOdAllProviders('od-all-excel') },
+        { id: 'all-excel', label: 'Excel (.xlsx)', icon: '📋', description: 'Combined data dump',     onClick: () => handleExportAllProviders('all-excel') },
       ],
     },
   ];
 
-  /* ── RENDER ── */
-
   return (
-    <div className="od-root page-enter" role="main">
-
-      {/* ── HEADER ── */}
-      <div className="od-header">
-        <div className="od-header-left">
-          <div className="inline-daterange od-daterange" role="group" aria-label="Date range filter">
+    <div>
+      {/* HEADER */}
+      <div className="ph-row" style={{ alignItems: 'center', marginBottom: 18 }}>
+        <div style={{ width: '100%' }}>
+          <div className="inline-daterange" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
             <span className="idr-label">📅 Date range</span>
-            <input type="date" className="fi-date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} aria-label="Start date" />
+            <input type="date" className="fi-date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
             <span className="idr-sep">to</span>
-            <input type="date" className="fi-date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} aria-label="End date" />
-            <button className="fi-btn fi-btn-accent" onClick={handleApply} disabled={loading} aria-label="Apply date filter">
-              {loading ? '⟳ Loading…' : 'Apply'}
-            </button>
+            <input type="date" className="fi-date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <select className="fi-select" value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <option value="">All Providers</option>
+              {providers.map((p) => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
+            </select>
+            <button className="fi-btn fi-btn-accent" onClick={applyFilters}>Apply</button>
+            <button className="fi-btn fi-btn-outline" onClick={clearFilters}>✕ Clear</button>
+            <ExportDropdown
+              sections={exportSections}
+              disabled={loading || !kpis}
+              loading={exportLoading}
+              loadingId={exportLoadingId}
+            />
+            <span className="active-range-pill">{rangePill}</span>
           </div>
-        </div>
-        <div className="od-header-right">
-          <ExportDropdown
-            sections={exportSections}
-            disabled={loading}
-            loading={exportLoading}
-            loadingId={exportLoadingId}
-          />
         </div>
       </div>
 
-      {/* ── RECON STATUS STRIP ── */}
-      {!loading && !hasData ? (
-        <div className="od-status-strip od-status-strip--neutral" role="status">
-          <span className="od-status-icon">○</span>
-          <span style={{ fontSize: 12.5, color: 'var(--text3)' }}>
-            No reconciliation data — upload appointments, charges &amp; ERA files then run reconciliation
-          </span>
+      <div className="kpi-row cols6" style={{ marginBottom: 18 }}>
+        <div className="kpi-card c-blue span2">
+          <div className="kpi-label">Total Appointments</div>
+          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{kpis ? fmt(kpis.total) : '—'}</div>
+          <div className="kpi-sub up">Total Number of Appointments</div>
+          <div className="kpi-emoji">📅</div>
         </div>
-      ) : (
-        <ReconStatusStrip
-          warnings={warnings}
-          exporting={exporting}
-          onExport={handleExportException}
-          mismatchPercent={
-            (() => {
-              const totalClaimed = kpis.checkoutChargeEraCount + kpis.checkoutChargeNoEraCount;
-              if (!totalClaimed) return 0;
-              return (kpis.checkoutChargeNoEraCount / totalClaimed) * 100;
-            })()
-          }
-        />
-      )}
-
-      {/* ── KPI ROW (Provider Dashboard card style) ── */}
-      <div
-        className="kpi-row od-financial-kpis"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 14, marginBottom: 18 }}
-        aria-label="Financial KPI metrics"
-      >
         <div className="kpi-card c-blue">
-          <div className="kpi-label">Opening AR</div>
-          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{loading ? '\u00A0' : fmt(kpis.openingAr)}</div>
-          <div className="kpi-sub">Period start balance</div>
-          <div className="kpi-emoji">📌</div>
+          <div className="kpi-label">Checked Out</div>
+          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{kpis ? fmt(kpis.checked_out) : '—'}</div>
+          <div className="kpi-sub up">{kpis ? pctAgainstTotal(kpis.checked_out, kpis.total) : '—'}</div>
+          <div className="kpi-emoji">✅</div>
+        </div>
+        <div className="kpi-card c-red">
+          <div className="kpi-label">No-shows</div>
+          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{kpis ? fmt(kpis.no_show) : '—'}</div>
+          <div className="kpi-sub dn">{kpis ? pctAgainstTotal(kpis.no_show, kpis.total) : '—'}</div>
+          <div className="kpi-emoji">❌</div>
         </div>
         <div className="kpi-card c-amber">
-          <div className="kpi-label">Charges</div>
-          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{loading ? '\u00A0' : fmt(kpis.chargesGenerated)}</div>
-          <div className="kpi-sub">Billed in range</div>
-          <div className="kpi-emoji">🧾</div>
+          <div className="kpi-label">Cancelled</div>
+          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{kpis ? fmt(kpis.cancelled) : '—'}</div>
+          <div className="kpi-sub">{kpis ? pctAgainstTotal(kpis.cancelled, kpis.total) : '—'}</div>
+          <div className="kpi-emoji">🔕</div>
         </div>
         <div className="kpi-card c-teal">
-          <div className="kpi-label">Payment Received</div>
-          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{loading ? '\u00A0' : fmt(kpis.paymentReceived)}</div>
-          <div className="kpi-sub">ERA total</div>
-          <div className="kpi-emoji">💵</div>
-        </div>
-        <div className={`kpi-card ${kpis.outstandingTrendUp ? 'c-red' : 'c-green'}`}>
-          <div className="kpi-label">Outstanding AR</div>
-          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{loading ? '\u00A0' : fmt(kpis.outstandingAr)}</div>
-          <div
-            className={`kpi-sub${
-              !loading && kpis.outstandingTrendLabel && kpis.outstandingTrendLabel !== '—'
-                ? kpis.outstandingTrendUp
-                  ? ' dn'
-                  : ' up'
-                : ''
-            }`}
-          >
-            {!loading ? kpis.outstandingTrendLabel : '—'}
-          </div>
-          <div className="kpi-emoji">🎯</div>
+          <div className="kpi-label">Rescheduled</div>
+          <div className={`kpi-val${loading ? ' skeleton' : ''}`}>{kpis ? fmt(kpis.rescheduled) : '—'}</div>
+          <div className="kpi-sub">{kpis ? pctAgainstTotal(kpis.rescheduled, kpis.total) : '—'}</div>
+          <div className="kpi-emoji">🔄</div>
         </div>
       </div>
 
-      {/* ── AR WATERFALL + CHECKOUT–CHARGE–ERA PIE (single row) ── */}
-      <section
-        aria-label="Account receivable waterfall and checkout ERA coverage"
-        className="od-section"
-      >
-        <div className="charts-2col" style={{ alignItems: 'stretch' }}>
-          <div className="chart-box od-chart-box">
-            <div className="od-chart-header">
-              <div>
-                <h3 className="ch-title">Account Receivable Flow Breakdown</h3>
-                <p className="ch-sub">Opening → Billing → Payment Made → Payment Received → Closing</p>
-              </div>
-              {!loading && (
-                <div className={`od-outcome-pill ${kpis.outstandingTrendUp ? 'od-outcome-pill--up' : 'od-outcome-pill--down'}`}>
-                  {kpis.outstandingTrendUp ? '↑ Account Receivable Growing' : '↓ Account Receivable Shrinking'}
-                </div>
-              )}
-            </div>
-            <div
-              ref={refWaterfall}
-              style={{ height: CHART_DIMS.waterfall.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && kpis.chargesGenerated === 0 && kpis.openingAr === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">📊</div>
-                  <div className="ch-no-data-text">No financial data</div>
-                  <div className="ch-no-data-hint">Run reconciliation to populate this chart</div>
-                </div>
-              )}
+      <div className="dash-section">📊 Status &amp; Distribution</div>
+      <div className="charts-2col" style={{ marginBottom: 14 }}>
+        <div className="chart-box">
+          <div className="ch-head">
+            <div>
+              <div className="ch-title">Appointment Status</div>
+              <div className="ch-sub">Distribution of Appointments for the Period</div>
             </div>
           </div>
-
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">Checkout–Charge–ERA Pie</h3>
-            <p className="ch-sub">Charges vs ERA approval coverage</p>
-            <div
-              ref={refEraStatus}
-              style={{ height: CHART_DIMS.donut.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && kpis.checkoutChargeEraCount === 0 && kpis.checkoutChargeNoEraCount === 0 && kpis.checkoutNoChargeCount === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">🔄</div>
-                  <div className="ch-no-data-text">No reconciliation data</div>
-                  <div className="ch-no-data-hint">Upload files and run reconciliation</div>
-                </div>
-              )}
-            </div>
-            {!loading && (
-              <div className="od-era-counts">
-                {(kpis.checkoutChargeEraCount + kpis.checkoutChargeNoEraCount) > 0 && (
-                  <span className="od-era-count od-era-count--blue">
-                    <span className="od-era-dot" style={{ background: EC.accent }} />
-                    {kpis.checkoutChargeEraCount + kpis.checkoutChargeNoEraCount} Charges
-                  </span>
-                )}
-                {kpis.checkoutChargeEraCount > 0 && (
-                  <span className="od-era-count od-era-count--green">
-                    <span className="od-era-dot" style={{ background: EC.accent2 }} />
-                    {kpis.checkoutChargeEraCount} Approved
-                  </span>
-                )}
-                {kpis.checkoutChargeNoEraCount > 0 && (
-                  <span className="od-era-count od-era-count--amber">
-                    <span className="od-era-dot" style={{ background: EC.danger }} />
-                    {kpis.checkoutChargeNoEraCount} No ERA
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refStatusDist} style={{ height: '100%', width: '100%' }} /></div>
         </div>
-      </section>
-
-      {/* ── ENCOUNTERS WEEKLY + MONTHLY (2-column row) ── */}
-      <section
-        aria-label="Weekly and monthly encounter metrics"
-        className="od-section"
-      >
-        <div className="charts-2col" style={{ alignItems: 'stretch' }}>
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">Encounters Weekly</h3>
-            <p className="ch-sub">Total checkouts per week (all providers)</p>
-            <div
-              ref={refEncountersWeekly}
-              style={{ height: CHART_DIMS.barChart.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && appointmentsData.length === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">📋</div>
-                  <div className="ch-no-data-text">No encounter data</div>
-                  <div className="ch-no-data-hint">Upload appointments to see weekly encounters</div>
-                </div>
-              )}
+        <div className="chart-box">
+          <div className="ch-head">
+            <div>
+              <div className="ch-title">Appointment-to-Checkout</div>
+              <div className="ch-sub">Flow from appointments to checkouts</div>
             </div>
           </div>
-
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">Encounters Monthly</h3>
-            <p className="ch-sub">Total checkouts per month (all providers)</p>
-            <div
-              ref={refEncountersMonthly}
-              style={{ height: CHART_DIMS.barChart.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && appointmentsData.length === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">📋</div>
-                  <div className="ch-no-data-text">No encounter data</div>
-                  <div className="ch-no-data-hint">Upload appointments to see monthly encounters</div>
-                </div>
-              )}
-            </div>
-          </div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refStatusTrend} style={{ height: '100%', width: '100%' }} /></div>
         </div>
-      </section>
-
-      {/* ── NEW PATIENTS WEEKLY + MONTHLY (2-column row) ── */}
-      <section
-        aria-label="New patient metrics (CPT 90791)"
-        className="od-section"
-      >
-        <div className="charts-2col" style={{ alignItems: 'stretch' }}>
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">New Patients Weekly</h3>
-            <p className="ch-sub">CPT 90791 — total new patient visits per week</p>
-            <div
-              ref={refNewPatientsWeekly}
-              style={{ height: CHART_DIMS.barChart.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && chargesData.filter(c => c.cpt_code === '90791').length === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">👤</div>
-                  <div className="ch-no-data-text">No new patients</div>
-                  <div className="ch-no-data-hint">Upload charges with CPT 90791 to see weekly new patients</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">New Patients Monthly</h3>
-            <p className="ch-sub">CPT 90791 — total new patient visits per month</p>
-            <div
-              ref={refNewPatientsMonthly}
-              style={{ height: CHART_DIMS.barChart.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && chargesData.filter(c => c.cpt_code === '90791').length === 0 && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">👤</div>
-                  <div className="ch-no-data-text">No new patients</div>
-                  <div className="ch-no-data-hint">Upload charges with CPT 90791 to see monthly new patients</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── PROVIDER HOURS + AR AGING (2-column row) ── */}
-      <section
-        aria-label="Provider productivity and AR aging"
-        className="od-section"
-      >
-        <div className="charts-2col" style={{ alignItems: 'stretch' }}>
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">Provider Hours</h3>
-            <p className="ch-sub">Appointment volume by provider</p>
-            <div className={`od-ph-layout${loading ? ' ch-loading' : ''}`}>
-              {!loading && appointmentsData.length === 0 ? (
-                <div className="ch-no-data od-ph-empty">
-                  <div className="ch-no-data-icon">⏰</div>
-                  <div className="ch-no-data-text">No provider data</div>
-                  <div className="ch-no-data-hint">Upload appointments to see provider hours</div>
-                </div>
-              ) : (
-                <>
-                  <div
-                    ref={refProviderHours}
-                    className="od-ph-chart"
-                    style={{ height: CHART_DIMS.pieOfPie.height, minHeight: CHART_DIMS.pieOfPie.height }}
-                  />
-                  {!loading && providerHoursBreakdown.length > 0 && (
-                    <aside className="od-ph-side" aria-label="Provider appointment counts">
-                      <div className="od-ph-side-title">Breakdown</div>
-                      <ul className="od-ph-list">
-                        {providerHoursBreakdown.map((row, i) => (
-                          <li key={`${row.name}-${i}`} className="od-ph-row">
-                            <span
-                              className="od-ph-swatch"
-                              style={{ background: PROVIDER_STATUS_COLORS[i % PROVIDER_STATUS_COLORS.length] }}
-                              aria-hidden
-                            />
-                            <span className="od-ph-name" title={row.name}>
-                              {row.name}
-                            </span>
-                            <span className="od-ph-meta">
-                              <span className="od-ph-count">{fmtCount(row.count)}</span>
-                              <span className="od-ph-pct">{row.pct.toFixed(1)}%</span>
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </aside>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="chart-box od-chart-box">
-            <h3 className="ch-title">AR Aging</h3>
-            <p className="ch-sub">Outstanding balance by claim age (pending items)</p>
-            <div
-              ref={refArAging}
-              style={{ height: CHART_DIMS.horizontal.height, width: '100%', position: 'relative' }}
-              className={loading ? 'ch-loading' : ''}
-            >
-              {!loading && arAgingIsEmpty && (
-                <div className="ch-no-data">
-                  <div className="ch-no-data-icon">💰</div>
-                  <div className="ch-no-data-text">No AR aging data</div>
-                  <div className="ch-no-data-hint">No pending claims in range, or run reconciliation</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── PAYER TABLE ── */}
-      <PayerTable payers={payerBreakdown} />
-    </div>
-  );
-}
-
-/* ═════════════════════ SUB-COMPONENTS ═════════════════════ */
-
-/* SectionHeader removed — unused */
-
-/* ── Recon Status Strip (single line, conditional) ── */
-interface ReconStatusStripProps {
-  warnings: Array<{ key: 'checkout_no_charge' | 'checkout_charge_no_era'; msg: string }>;
-  exporting: string | null;
-  onExport: (key: 'checkout_no_charge' | 'checkout_charge_no_era') => Promise<void>;
-  mismatchPercent: number;
-}
-
-function ReconStatusStrip({ warnings, exporting, onExport, mismatchPercent }: ReconStatusStripProps) {
-  const hasNoCharge = warnings.some((w) => w.key === 'checkout_no_charge');
-  const hasNoEra    = warnings.some((w) => w.key === 'checkout_charge_no_era');
-  const allOk       = warnings.length === 0;
-
-  return (
-    <div
-      className={`od-status-strip${allOk ? ' od-status-strip--ok' : ' od-status-strip--warn'}`}
-      role="status"
-      aria-live="polite"
-    >
-      {/* Left: icon */}
-      <span className="od-status-icon">{allOk ? '✓' : '⚠'}</span>
-
-      <span className={`od-status-item ${allOk ? 'od-status-item--ok' : 'od-status-item--warn'}`}>
-        <span className={`od-status-dot ${allOk ? 'od-status-dot--ok' : 'od-status-dot--warn'}`} />
-        {allOk ? '100% Claimed Files Matched' : `${mismatchPercent.toFixed(1)}% claim file errors`}
-      </span>
-
-      <span className="od-status-sep" />
-
-      {/* Checkout vs Charge */}
-      <StatusItem
-        ok={!hasNoCharge}
-        okLabel="Checkout vs Charge matched"
-        warnLabel={warnings.find((w) => w.key === 'checkout_no_charge')?.msg ?? ''}
-        warnKey="checkout_no_charge"
-        exporting={exporting}
-        onExport={onExport}
-      />
-
-      <span className="od-status-sep" />
-
-      {/* ERA */}
-      <StatusItem
-        ok={!hasNoEra}
-        okLabel="All ERA approved"
-        warnLabel={warnings.find((w) => w.key === 'checkout_charge_no_era')?.msg ?? ''}
-        warnKey="checkout_charge_no_era"
-        exporting={exporting}
-        onExport={onExport}
-      />
-    </div>
-  );
-}
-
-interface StatusItemProps {
-  ok: boolean;
-  okLabel: string;
-  warnLabel: string;
-  warnKey: 'checkout_no_charge' | 'checkout_charge_no_era';
-  exporting: string | null;
-  onExport: (key: 'checkout_no_charge' | 'checkout_charge_no_era') => Promise<void>;
-}
-
-function StatusItem({ ok, okLabel, warnLabel, warnKey, exporting, onExport }: StatusItemProps) {
-  if (ok) {
-    return (
-      <span className="od-status-item od-status-item--ok">
-        <span className="od-status-dot od-status-dot--ok" />
-        {okLabel}
-      </span>
-    );
-  }
-  return (
-    <span className="od-status-item od-status-item--warn">
-      <span className="od-status-dot od-status-dot--warn" />
-      <span>{warnLabel}</span>
-      <button
-        className="od-status-dl"
-        onClick={() => void onExport(warnKey)}
-        disabled={exporting !== null}
-        title="Download exception report"
-        aria-label={`Download exception report for ${warnKey}`}
-      >
-        {exporting === warnKey ? '…' : '⬇ Export'}
-      </button>
-    </span>
-  );
-}
-
-/* ── Payer Table ── */
-function PayerTable({ payers }: { payers: InsurancePayerBreakdownItem[] }) {
-  const total = payers.reduce((s, p) => s + p.cash_collected_mapped_amount, 0);
-  return (
-    <div className="card od-table-card" id="finance-table">
-      <div className="c-head">
-        <div>
-          <h2 className="c-title">Insurance Payer Bank Receipts</h2>
-          <p className="c-sub">Amount received from bank, mapped to insurance payer</p>
-        </div>
-        {payers.length > 0 && (
-          <div className="od-table-total">
-            <span className="od-table-total-label">Total</span>
-            <span className="od-table-total-val">{CURRENCY_FORMAT.format(total)}</span>
-          </div>
-        )}
       </div>
-      <div className="tbl-wrap">
-        <table className="tbl-fin" role="table" aria-label="Insurance payer bank receipts">
-          <thead>
-            <tr>
-              <th scope="col">Insurance Payer</th>
-              <th scope="col">Amount Received</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payers.length === 0 ? (
-              <tr>
-                <td colSpan={2}>
-                  <div className="tbl-empty-state">
-                    <div className="tbl-empty-icon">🏦</div>
-                    <div className="tbl-empty-title">No bank receipts mapped</div>
-                    <div className="tbl-empty-sub">Upload a bank statement to see insurance cash receipts mapped to payers for the selected date range</div>
-                  </div>
-                </td>
-              </tr>
-            ) : (
-              payers.map((payer) => {
-                const pct = total > 0 ? (payer.cash_collected_mapped_amount / total) * 100 : 0;
-                return (
-                  <tr key={payer.payer_name}>
-                    <td>
-                      <div className="od-payer-cell">
-                        <span className="bold">{payer.payer_name}</span>
-                        <div className="od-payer-bar-wrap">
-                          <div className="od-payer-bar" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="mono">{CURRENCY_FORMAT.format(payer.cash_collected_mapped_amount)}</span>
-                      <span className="od-payer-pct">{pct.toFixed(1)}%</span>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+
+      <div className="dash-section">✅ Completion</div>
+      <div className="charts-2col" style={{ marginBottom: 14 }}>
+        <div className="chart-box">
+          <div className="ch-title">No-show %</div>
+          <div className="ch-sub">Weekly no-show percentage with average marker</div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refNoShowRate} style={{ height: '100%', width: '100%' }} /></div>
+        </div>
+        <div className="chart-box">
+          <div className="ch-title">Monthly Checkouts</div>
+          <div className="ch-sub">Monthly checkout volume by period</div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refMonthlyChk} style={{ height: '100%', width: '100%' }} /></div>
+        </div>
+      </div>
+
+      <div className="dash-section">📉 Volume &amp; Caseload</div>
+      <div className="charts-2col" style={{ marginBottom: 14 }}>
+        <div className="chart-box">
+          <div className="ch-title">Active Caseload</div>
+          <div className="ch-sub">Checkout &amp; Rescheduled by period</div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refCompletionVs} style={{ height: '100%', width: '100%' }} /></div>
+        </div>
+        <div className="chart-box">
+          <div className="ch-title">Weekly Checkouts</div>
+          <div className="ch-sub">Weekly checkout with target line</div>
+          <div className="ch-wrap" style={{ width: '100%' }}><div ref={refWeeklyChk} style={{ height: '100%', width: '100%' }} /></div>
+        </div>
+      </div>
+
+      <div className="dash-section">📊 Trends</div>
+      <div className="chart-box" style={{ marginBottom: 14 }}>
+        <div className="ch-title">Daily Activity Heatmap</div>
+        {/* ── subtitle reflects fixed 90-day window, Mon–Fri ── */}
+        <div className="ch-sub">One cell per day · Mon–Fri · last 90 days</div>
+        <div id="op-heatmap-wrap" ref={refHeatmap} className="ch-wrap-heat" style={{ marginTop: 4 }} />
       </div>
     </div>
   );
