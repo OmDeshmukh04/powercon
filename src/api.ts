@@ -74,13 +74,13 @@ api.interceptors.response.use(
 export type { AppRequestConfig };
 export default api;
 
-export type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'pending';
+export type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'scheduled';
 
 /** Aligns with reconciliation SQL (ILIKE %checkout%) and backend appointment summary — substring match, one bucket per row. */
 export function normalizeAppointmentStatus(status?: string): AppointmentStatusKey {
   const raw = (status ?? '').trim().toLowerCase();
-  if (!raw) return 'pending';
-  if (/\bnot\b\s+check/.test(raw) || raw.includes('unchecked')) return 'pending';
+  if (!raw) return 'scheduled';
+  if (/\bnot\b\s+check/.test(raw) || raw.includes('unchecked')) return 'scheduled';
   if (raw.includes('cancel')) return 'cancelled';
   if (raw.includes('reschedule')) return 'rescheduled';
   if (raw.includes('no-show') || raw.includes('no show') || raw.includes('noshow')) return 'no_show';
@@ -92,8 +92,8 @@ export function normalizeAppointmentStatus(status?: string): AppointmentStatusKe
   ) {
     return 'checked_out';
   }
-  if (raw === 'pending' || raw === 'scheduled' || raw.includes('scheduled')) return 'pending';
-  return 'pending';
+  if (raw === 'pending' || raw === 'scheduled' || raw.includes('scheduled')) return 'scheduled';
+  return 'scheduled';
 }
 
 function toIsoDay(dateLike?: string): string {
@@ -138,7 +138,7 @@ async function buildAppointmentSummaryFromList(
   let noShow = 0;
   let cancelled = 0;
   let rescheduled = 0;
-  let pending = 0;
+  let scheduled = 0;
 
   for (const appt of all) {
     const day = toIsoDay(appt.appt_date);
@@ -152,7 +152,7 @@ async function buildAppointmentSummaryFromList(
         no_show: 0,
         cancelled: 0,
         rescheduled: 0,
-        pending: 0,
+        scheduled: 0,
       });
     }
 
@@ -164,7 +164,7 @@ async function buildAppointmentSummaryFromList(
     else if (key === 'no_show') noShow += 1;
     else if (key === 'cancelled') cancelled += 1;
     else if (key === 'rescheduled') rescheduled += 1;
-    else pending += 1;
+    else scheduled += 1;
 
     const dt = new Date(appt.appt_date);
     const weekday = (dt.getDay() + 6) % 7;
@@ -182,7 +182,7 @@ async function buildAppointmentSummaryFromList(
     no_show: noShow,
     cancelled,
     rescheduled,
-    pending,
+    scheduled,
     checkout_rate: total > 0 ? (checkedOut / total) * 100 : 0,
     noshow_rate: total > 0 ? (noShow / total) * 100 : 0,
   };

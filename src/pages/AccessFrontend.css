@@ -680,9 +680,9 @@ body {
   padding: 30px 20px 36px;
   background: var(--page-bg);
   overflow-x: hidden;
-  width: auto;
-  max-width: 1240px;
-  margin-right: auto;
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -1265,30 +1265,31 @@ tr:hover td {
   bottom: 0;
   height: 3px;
   border-radius: 999px;
+  background: var(--accent);
 }
 
 .od-kpi-card--blue::after {
-  background: linear-gradient(90deg, var(--accent), #1a4a72);
+  background: var(--accent);
 }
 
 .od-kpi-card--amber::after {
-  background: linear-gradient(90deg, var(--amber), #f97316);
+  background: var(--accent);
 }
 
 .od-kpi-card--purple::after {
-  background: linear-gradient(90deg, var(--purple), #a78bfa);
+  background: var(--accent);
 }
 
 .od-kpi-card--teal::after {
-  background: linear-gradient(90deg, #0891b2, #06b6d4);
+  background: var(--accent);
 }
 
 .od-kpi-card--green::after {
-  background: linear-gradient(90deg, var(--green), var(--cyan));
+  background: var(--accent);
 }
 
 .od-kpi-card--red::after {
-  background: linear-gradient(90deg, var(--red), #ec4899);
+  background: var(--accent);
 }
 
 /* Outcome card border colors */

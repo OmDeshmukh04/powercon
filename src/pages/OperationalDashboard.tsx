@@ -289,7 +289,7 @@ export default function OperationalDashboard() {
       setAppointmentsData([]);
       setChargesData([]);
       setArAgingBuckets([]);
-    } finally {
+    } finally {     1
       setLoading(false);
     }
   }, [dateFrom, dateTo]);
@@ -496,14 +496,14 @@ export default function OperationalDashboard() {
     const charged = data.checkoutChargeEraCount + data.checkoutChargeNoEraCount;
     const pieData = [
       { name: 'Checkouts',    value: charged,                      itemStyle: { color: EC.accent } },
-      { name: 'Claims Filed', value: data.checkoutChargeEraCount,  itemStyle: { color: 'rgba(0,69,105,.55)' } },
+      { name: 'Claims Filed', value: data.checkoutChargeEraCount,  itemStyle: { color: EC.accent2 } },
       { name: 'Missing ERAs', value: data.checkoutChargeNoEraCount, itemStyle: { color: '#9ca3af' } },
     ];
     const total = pieData.reduce((s, d) => s + d.value, 0);
 
     chart.setOption({
       backgroundColor: 'transparent',
-      color: [EC.accent, 'rgba(0,69,105,.55)', '#9ca3af'],
+      color: [EC.accent, EC.accent2, '#9ca3af'],
       tooltip: {
         trigger: 'item',
         ...TOOLTIP_COMMON,
@@ -523,7 +523,7 @@ export default function OperationalDashboard() {
         textStyle: {
           color: '#1e293b',
           fontSize: 11,
-          fontWeight: 600,
+          fontWeight: 500,
           fontFamily: 'Montserrat, sans-serif',
         },
         formatter: (name: string) => {
@@ -872,7 +872,7 @@ export default function OperationalDashboard() {
         yAxis: {
           type: 'category',
           data: providerNames,
-          inverse: false,
+          inverse: true,
           axisLine: { show: true, lineStyle: { color: EC.border } },
           axisTick: { show: false },
           axisLabel: { ...CHART_AXIS_TEXT_STYLE, color: EC.text },

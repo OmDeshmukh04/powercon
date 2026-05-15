@@ -249,7 +249,6 @@ export default function ProviderDashboard() {
           { name: 'No-show',     value: kpis.no_show,      itemStyle: { color: EC.danger } },
           { name: 'Cancelled',   value: kpis.cancelled,    itemStyle: { color: EC.purple } },
           { name: 'Rescheduled', value: kpis.rescheduled,  itemStyle: { color: EC.accent2 } },
-          { name: 'Pending',     value: kpis.pending,      itemStyle: { color: EC.accent3 } },
         ];
         const total = statusData.reduce((sum, item) => sum + item.value, 0);
         c.setOption({
@@ -791,16 +790,16 @@ export default function ProviderDashboard() {
       { label: 'No-shows', value: fmt(kpis.no_show), sub: pctAgainstTotal(kpis.no_show, kpis.total) },
       { label: 'Cancelled', value: fmt(kpis.cancelled), sub: pctAgainstTotal(kpis.cancelled, kpis.total) },
       { label: 'Rescheduled', value: fmt(kpis.rescheduled), sub: pctAgainstTotal(kpis.rescheduled, kpis.total) },
-      { label: 'Pending', value: fmt(kpis.pending) },
+      { label: 'Scheduled', value: fmt(kpis.scheduled) },
     ];
   }
 
   function buildDailySheet(): TableSheet {
     return {
       sheetName: 'Daily Data',
-      headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+      headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Scheduled'],
       rows: (summary?.daily ?? []).map((d) => [
-        d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
+        d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.scheduled,
       ]),
     };
   }
@@ -856,13 +855,13 @@ export default function ProviderDashboard() {
             { label: 'No-show',     value: pk.no_show,     sub: `${pk.noshow_rate.toFixed(2)}%`  },
             { label: 'Cancelled',   value: pk.cancelled },
             { label: 'Rescheduled', value: pk.rescheduled },
-            { label: 'Pending',     value: pk.pending },
+            { label: 'Scheduled',   value: pk.scheduled },
           ],
           sheet: {
             sheetName: 'Daily',
-            headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+            headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Scheduled'],
             rows: provSummary.daily.map((d) => [
-              d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
+              d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.scheduled,
             ]),
           },
         });
@@ -884,13 +883,13 @@ export default function ProviderDashboard() {
           { label: 'No-show',     value: ak.no_show,     sub: `${ak.noshow_rate.toFixed(2)}%`  },
           { label: 'Cancelled',   value: ak.cancelled },
           { label: 'Rescheduled', value: ak.rescheduled },
-          { label: 'Pending',     value: ak.pending },
+          { label: 'Scheduled',   value: ak.scheduled },
         ],
         sheets: [{
           sheetName: 'Daily Data (All)',
-          headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Pending'],
+          headers: ['Date', 'Total', 'Checked Out', 'No-show', 'Cancelled', 'Rescheduled', 'Scheduled'],
           rows: allSummary.daily.map((d) => [
-            d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.pending,
+            d.appt_date, d.total, d.checked_out, d.no_show, d.cancelled, d.rescheduled, d.scheduled,
           ]),
         }],
         filename: `Provider_Dashboard_AllProviders_${new Date().toISOString().slice(0, 10)}.xlsx`,
