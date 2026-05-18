@@ -2,12 +2,8 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import * as echarts from 'echarts';
 import {
   exportExceptionReport,
-  getReconSummary,
-  getReconAging,
-  getInsuranceCashCollected,
+  getOperationalDashboardData,
   getProviderSummary,
-  fetchAppointmentsAllPages,
-  fetchChargesAllPages,
   normalizeAppointmentStatus,
 } from '../api';
 import type {
@@ -16,6 +12,7 @@ import type {
   ReconAgingBucketItem,
   InsurancePayerBreakdownItem,
   Appointment,
+  ProviderSummary,
 } from '../types';
 import ExportDropdown from '../components/ExportDropdown';
 import type { ExportSection } from '../components/ExportDropdown';
@@ -143,12 +140,6 @@ function weeksAgoStr(n: number) {
   d.setDate(d.getDate() - n * 7);
   return d.toISOString().split('T')[0];
 }
-/** Returns the ISO date string for the day before the given YYYY-MM-DD string. */
-function dayBefore(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00'); // force local midnight parse
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
-}
 
 /* ═══════════════════ COMPONENT ═════════════════════════════ */
 export default function OperationalDashboard() {
@@ -249,38 +240,47 @@ export default function OperationalDashboard() {
     setLoading(true);
     setLoadError(null);
     try {
-      const priorEndDate = start ? dayBefore(start) : undefined;
+      // ── Single aggregated API call replaces 6+ sequential calls ──
+      const data = await getOperationalDashboardData({
+        start_date: start || undefined,
+        end_date: end || undefined,
+      });
 
-      const summaryData = await getReconSummary({ start_date: start || undefined, end_date: end || undefined });
-      const insuranceData = await getInsuranceCashCollected({ start_date: start || undefined, end_date: end || undefined });
-      const priorData = priorEndDate
-        ? await getReconSummary({ end_date: priorEndDate })
-        : null;
-      const appointmentsList = await fetchAppointmentsAllPages({ date_from: start || undefined, date_to: end || undefined });
-      const chargesList = await fetchChargesAllPages({ date_from: start || undefined, date_to: end || undefined });
-      const agingRows = await getReconAging({ start_date: start || undefined, end_date: end || undefined });
+      // Map aggregated response to existing state shape
+      const summaryData = {
+        rows: (data.recon_summary?.summary ?? []).map((r: any) => ({
+          status: r.status,
+          count: Number(r.count ?? 0),
+          billed: Number(r.billed ?? 0),
+          paid: Number(r.paid ?? 0),
+          balance: Number(r.balance ?? 0),
+        })),
+        total_count: Number(data.recon_summary?.totals?.count ?? 0),
+        total_billed: Number(data.recon_summary?.totals?.billed ?? 0),
+        total_paid: Number(data.recon_summary?.totals?.paid ?? 0),
+        total_balance: Number(data.recon_summary?.totals?.balance ?? 0),
+        collection_rate: Number(data.recon_summary?.totals?.billed ?? 0) > 0
+          ? (Number(data.recon_summary?.totals?.paid ?? 0) / Number(data.recon_summary?.totals?.billed ?? 0)) * 100
+          : 0,
+      };
+
+      const insuranceData = data.insurance_cash_collected;
+      const priorData = data.prior_recon_summary;
 
       setSummary(summaryData);
       setInsuranceCashCollected(
-        insuranceData.cash_collected_mapped_amount || insuranceData.insurance_cash_collected || 0,
+        insuranceData?.cash_collected_mapped_amount || insuranceData?.insurance_cash_collected || 0,
       );
-      setEraProcessedAmount(insuranceData.era_processed_amount || 0);
-      setPayerBreakdown(insuranceData.payer_breakdown || []);
-      setPriorBalance(priorData?.total_balance ?? 0);
+      setEraProcessedAmount(insuranceData?.era_processed_amount || 0);
+      setPayerBreakdown(insuranceData?.payer_breakdown || []);
+      setPriorBalance(priorData?.totals?.balance ?? 0);
       
-      setAppointmentsData(appointmentsList);
-      setChargesData(chargesList);
-      setArAgingBuckets(agingRows);
+      setAppointmentsData(data.appointments as any[]);
+      setChargesData(data.charges as any[]);
+      setArAgingBuckets(data.ar_aging ?? []);
     } catch (error) {
-      console.error('Failed to load reconciliation summary:', error);
-      if (error instanceof Error) {
-        console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
-        });
-      }
-      setLoadError(error instanceof Error ? error.message : 'Failed to load reconciliation data');
+      console.error('Failed to load operational dashboard:', error);
+      setLoadError(error instanceof Error ? error.message : 'Failed to load dashboard data');
       setSummary(null);
       setInsuranceCashCollected(0);
       setEraProcessedAmount(0);
@@ -289,7 +289,7 @@ export default function OperationalDashboard() {
       setAppointmentsData([]);
       setChargesData([]);
       setArAgingBuckets([]);
-    } finally {     1
+    } finally {
       setLoading(false);
     }
   }, [dateFrom, dateTo]);
@@ -1081,7 +1081,7 @@ export default function OperationalDashboard() {
         start_date: dateFrom || undefined,
         end_date: dateTo || undefined,
       });
-      const providerData = provSummaries.map((ps) => ({
+      const providerData = provSummaries.map((ps: ProviderSummary) => ({
         name: ps.provider_name,
         kpis: [
           { label: 'Appointments', value: ps.appointment_count },
@@ -1127,7 +1127,7 @@ export default function OperationalDashboard() {
           {
             sheetName: 'Provider Summary',
             headers: ['Provider', 'Appointments', 'Billed', 'Paid', 'Balance', 'Collection Rate'],
-            rows: provSummaries.map((ps) => [
+            rows: provSummaries.map((ps: ProviderSummary) => [
               ps.provider_name,
               ps.appointment_count,
               ps.billed,

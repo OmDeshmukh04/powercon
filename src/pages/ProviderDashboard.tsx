@@ -111,7 +111,28 @@ export default function ProviderDashboard() {
 
   // Load providers + provider-wise targets
   useEffect(() => {
-    getProviders().then(setProviders).catch(() => {});
+    getProviders()
+      .then((items) => {
+        // Normalize names: trim and clean up spacing around commas/whitespace
+        const normalize = (name: string) => (name || '').trim().replace(/\s*,\s*/g, ', ').toLowerCase();
+        
+        // Deduplicate: filter out 0/null ids and keep only first occurrence of each id + normalized name
+        const seenIds = new Set<string | number>();
+        const seenNames = new Set<string>();
+        const unique = items.filter((p) => {
+          if (!p.id || Number(p.id) === 0 || p.id === '0') return false;
+          if (seenIds.has(p.id)) return false;
+          
+          const normalizedName = normalize(p.name);
+          if (seenNames.has(normalizedName)) return false;
+          
+          seenIds.add(p.id);
+          seenNames.add(normalizedName);
+          return true;
+        });
+        setProviders(unique);
+      })
+      .catch(() => {});
     getProviderTargets()
       .then((targets) => setProviderTargets(Object.fromEntries(targets.map((t) => [t.provider_id, t]))))
       .catch(() => {});

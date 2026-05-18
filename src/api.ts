@@ -568,3 +568,101 @@ export async function fetchChargesAllPages(
   } while (page <= pages && page <= 100);
   return all;
 }
+
+// ─── Aggregated Dashboard Endpoints ─────────────────────────────
+// These replace 6+ individual API calls with 1 call each.
+
+export interface OperationalDashboardData {
+  recon_summary: {
+    summary: Array<{ status: string; count: number; billed: number; paid: number; balance: number }>;
+    totals: { count: number; billed: number; paid: number; balance: number };
+  };
+  insurance_cash_collected: {
+    insurance_cash_collected: number;
+    era_processed_amount: number;
+    cash_collected_mapped_amount: number;
+    unmapped_gap_amount: number;
+    payer_breakdown: Array<{
+      payer_name: string;
+      era_processed_amount: number;
+      cash_collected_mapped_amount: number;
+      unmapped_gap_amount: number;
+    }>;
+  };
+  prior_recon_summary: {
+    summary: Array<{ status: string; count: number; billed: number; paid: number; balance: number }>;
+    totals: { count: number; billed: number; paid: number; balance: number };
+  } | null;
+  appointments: Array<{
+    id: string;
+    patient_id?: string;
+    provider_id?: string;
+    appt_date?: string;
+    start_time?: string;
+    status?: string;
+    provider_name?: string;
+  }>;
+  charges: Array<{
+    id: string;
+    service_date?: string;
+    cpt_code?: string;
+    provider_id?: string;
+  }>;
+  ar_aging: ReconAgingBucketItem[];
+}
+
+export async function getOperationalDashboardData(params: {
+  start_date?: string;
+  end_date?: string;
+} = {}): Promise<OperationalDashboardData> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+
+  const res = await api.get('/v1/dashboard/operational-summary', { params: query });
+  return res.data as OperationalDashboardData;
+}
+
+export interface ProviderDashboardData {
+  appointment_summary: {
+    kpis: AppointmentKPIs;
+    bounds: { min_date: string | null; max_date: string | null };
+    daily: Array<{
+      appt_date: string;
+      total: number;
+      checked_out: number;
+      no_show: number;
+      cancelled: number;
+      rescheduled: number;
+      pending: number;
+    }>;
+    heatmap: Array<{ weekday: number; hour: number; count: number }>;
+  };
+  providers: Provider[];
+  provider_targets: Array<{
+    provider_id: string;
+    weekly_checkout_target: number;
+    monthly_checkout_target: number;
+  }>;
+  recent_appointments: {
+    items: Appointment[];
+    total: number;
+    page: number;
+    page_size: number;
+    pages: number;
+  };
+}
+
+export async function getProviderDashboardData(params: {
+  start_date?: string;
+  end_date?: string;
+  provider_id?: string;
+} = {}): Promise<ProviderDashboardData> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+  if (params.provider_id) query.provider_id = params.provider_id;
+
+  const res = await api.get('/v1/dashboard/provider-summary', { params: query });
+  return res.data as ProviderDashboardData;
+}
