@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name: Deploy Frontend to S3
 
 on:
@@ -27,11 +28,99 @@ jobs:
           VITE_API_URL: http://52.66.9.98:8000
 
       - name: Configure AWS Credentials
+=======
+name: Frontend CI & Deploy
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ── Frontend CI (runs on every PR + push) ──────────────────────
+  ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_URL: http://localhost:8000
+        run: npm run build
+
+  # ── Deploy to S3 (push to main only) ───────────────────────────
+  deploy:
+    name: Deploy to S3
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ci]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: npm run build
+
+      - name: Configure AWS credentials
+>>>>>>> 6068651 (ci: add GitHub Actions deploy workflow)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
+<<<<<<< HEAD
       - name: Upload to S3
         run: aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
+=======
+      - name: Deploy to S3
+        run: |
+          # Sync hashed assets with long cache
+          aws s3 sync dist/ "s3://${{ secrets.S3_BUCKET_NAME }}" \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # index.html must always be fresh (no cache)
+          aws s3 cp dist/index.html "s3://${{ secrets.S3_BUCKET_NAME }}/index.html" \
+            --cache-control "public, max-age=0, must-revalidate"
+
+          # JSON config files — no cache
+          aws s3 sync dist/ "s3://${{ secrets.S3_BUCKET_NAME }}" \
+            --exclude "*" \
+            --include "*.json" \
+            --cache-control "public, max-age=0, must-revalidate"
+
+          echo "✅ Frontend deployed to S3"
+>>>>>>> 6068651 (ci: add GitHub Actions deploy workflow)
