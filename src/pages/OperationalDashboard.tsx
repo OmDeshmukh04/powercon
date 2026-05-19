@@ -39,13 +39,13 @@ const EC = {
   danger: '#0b5f97',
   purple: '#480590',
   accentLight: '#5db1b1',
-  grey: '#ab5656',
+  grey: '#6b7280',
   /** Negative / payment step — matches Provider status waterfall */
   wfNeg: '#f87171',
 } as const;
 
 // ── Provider Hours: vibrant multi-color palette matching providerwise pie charts ──
-const PROVIDER_STATUS_COLORS = ['#004569', '#0b5f97', '#016b8f', '#05a9a9', '#3d79b8', '#6b7280', '#5db1b1', '#ab5656'];
+const PROVIDER_STATUS_COLORS: string[] = [EC.accent, EC.danger, '#016b8f', EC.accent2, EC.accent3, EC.grey, EC.accentLight, EC.grey];
 const CHART_AXIS_MUTED = '#9ca3af';
 const CHART_AXIS_TEXT_STYLE = { fontFamily: 'Montserrat, sans-serif', fontSize: 10, fontWeight: 400 };
 const LEGEND_TEXT_STYLE = { color: '#1e293b', fontSize: 11, fontWeight: 600, fontFamily: 'Montserrat, sans-serif' };
