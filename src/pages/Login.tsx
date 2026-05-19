@@ -5,30 +5,14 @@ import type { AppDispatch } from '../redux/store';
 import { signIn } from '../redux/authSlice';
 import { ROLE_HOME_PATHS } from '../utils/roles';
 
-type DemoRole = 'admin' | 'finance' | 'support' | 'provider';
-
-const DEMO_CREDS: Record<DemoRole, { email: string; password: string }> = {
-  admin:    { email: 'admin@embt.com',    password: 'Admin123!' },
-  finance:  { email: 'finance@embt.com',  password: 'Finance123!' },
-  support:  { email: 'support@embt.com',  password: 'Support123!' },
-  provider: { email: 'provider@embt.com', password: 'Provider123!' },
-};
-
 export default function Login() {
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
 
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [selRole,  setSelRole]  = useState<DemoRole | null>(null);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
-
-  function setRole(role: DemoRole) {
-    setSelRole(role);
-    setEmail(DEMO_CREDS[role].email);
-    setPassword(DEMO_CREDS[role].password);
-  }
 
   async function doLogin() {
     if (!email || !password) { setError('Please enter email and password.'); return; }
@@ -79,7 +63,7 @@ export default function Login() {
           pointer-events: none;
         }
         .login-wrap {
-          background: var(--bg2);
+          background: #ffffff;
           border: 1px solid var(--border);
           border-radius: 18px;
           padding: 44px 40px;
@@ -128,8 +112,8 @@ export default function Login() {
           border-color: var(--accent);
           box-shadow: 0 0 0 3px var(--accent-g);
         }
-        .lf-row { display: flex; justify-content: flex-end; margin: -6px 0 20px; }
-        .lf-forgot { font-size: 12px; color: var(--accent); cursor: pointer; opacity: .8; }
+        .lf-row { display: flex; justify-content: flex-end; margin: 10px 0 22px; }
+        .lf-forgot { font-size: 12px; color: var(--accent); cursor: pointer; opacity: .8; transition: opacity .15s; }
         .lf-forgot:hover { opacity: 1; text-decoration: underline; }
         .lf-btn {
           width: 100%;
@@ -151,25 +135,6 @@ export default function Login() {
           box-shadow: 0 8px 24px rgba(45,127,193,.4);
         }
         .lf-btn:disabled { opacity: .6; cursor: not-allowed; }
-        .role-demo-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
-        .role-demo-label { font-size: 11px; color: var(--text3); text-align: center; margin-bottom: 10px; letter-spacing: .3px; }
-        .role-pills { display: flex; gap: 7px; justify-content: center; flex-wrap: wrap; }
-        .r-pill {
-          padding: 5px 13px;
-          border-radius: 16px;
-          font-size: 12px;
-          font-weight: 600;
-          border: 1px solid var(--border);
-          background: var(--bg3);
-          color: var(--text2);
-          cursor: pointer;
-          transition: all .15s;
-        }
-        .r-pill:hover, .r-pill.sel {
-          border-color: var(--accent);
-          color: var(--accent);
-          background: var(--accent-g);
-        }
         .lf-error {
           background: var(--red-g);
           border: 1px solid rgba(220,53,69,.2);
@@ -218,25 +183,13 @@ export default function Login() {
             />
           </div>
 
+          <div className="lf-row">
+            <span className="lf-forgot">Forgot password?</span>
+          </div>
 
           <button className="lf-btn" onClick={doLogin} disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in to CapSurge →'}
           </button>
-
-          <div className="role-demo-section">
-            <div className="role-demo-label">DEMO — click a role to preview</div>
-            <div className="role-pills">
-              {(['admin', 'finance', 'support', 'provider'] as DemoRole[]).map((r) => (
-                <div
-                  key={r}
-                  className={`r-pill${selRole === r ? ' sel' : ''}`}
-                  onClick={() => setRole(r)}
-                >
-                  {r === 'admin' ? '👑' : r === 'finance' ? '💰' : r === 'support' ? '🧑' : '🩺'} {r.charAt(0).toUpperCase() + r.slice(1)}
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </>

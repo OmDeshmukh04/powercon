@@ -60,7 +60,6 @@ export type AppointmentStatus =
   | 'No-show'
   | 'Cancelled'
   | 'Rescheduled'
-  | 'Pending'
   | 'Scheduled';
 
 export interface Appointment {
@@ -92,7 +91,7 @@ export interface AppointmentKPIs {
   no_show: number;
   cancelled: number;
   rescheduled: number;
-  pending: number;
+  scheduled: number;
   checkout_rate: number;
   noshow_rate: number;
 }
@@ -221,7 +220,7 @@ export interface AppointmentDailySeriesItem {
   no_show: number;
   cancelled: number;
   rescheduled: number;
-  pending: number;
+  scheduled: number;
 }
 
 export interface AppointmentHeatmapItem {

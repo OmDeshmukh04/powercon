@@ -74,13 +74,13 @@ api.interceptors.response.use(
 export type { AppRequestConfig };
 export default api;
 
-export type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'pending';
+export type AppointmentStatusKey = 'checked_out' | 'no_show' | 'cancelled' | 'rescheduled' | 'scheduled';
 
 /** Aligns with reconciliation SQL (ILIKE %checkout%) and backend appointment summary — substring match, one bucket per row. */
 export function normalizeAppointmentStatus(status?: string): AppointmentStatusKey {
   const raw = (status ?? '').trim().toLowerCase();
-  if (!raw) return 'pending';
-  if (/\bnot\b\s+check/.test(raw) || raw.includes('unchecked')) return 'pending';
+  if (!raw) return 'scheduled';
+  if (/\bnot\b\s+check/.test(raw) || raw.includes('unchecked')) return 'scheduled';
   if (raw.includes('cancel')) return 'cancelled';
   if (raw.includes('reschedule')) return 'rescheduled';
   if (raw.includes('no-show') || raw.includes('no show') || raw.includes('noshow')) return 'no_show';
@@ -92,8 +92,8 @@ export function normalizeAppointmentStatus(status?: string): AppointmentStatusKe
   ) {
     return 'checked_out';
   }
-  if (raw === 'pending' || raw === 'scheduled' || raw.includes('scheduled')) return 'pending';
-  return 'pending';
+  if (raw === 'pending' || raw === 'scheduled' || raw.includes('scheduled')) return 'scheduled';
+  return 'scheduled';
 }
 
 function toIsoDay(dateLike?: string): string {
@@ -138,7 +138,7 @@ async function buildAppointmentSummaryFromList(
   let noShow = 0;
   let cancelled = 0;
   let rescheduled = 0;
-  let pending = 0;
+  let scheduled = 0;
 
   for (const appt of all) {
     const day = toIsoDay(appt.appt_date);
@@ -152,7 +152,7 @@ async function buildAppointmentSummaryFromList(
         no_show: 0,
         cancelled: 0,
         rescheduled: 0,
-        pending: 0,
+        scheduled: 0,
       });
     }
 
@@ -164,7 +164,7 @@ async function buildAppointmentSummaryFromList(
     else if (key === 'no_show') noShow += 1;
     else if (key === 'cancelled') cancelled += 1;
     else if (key === 'rescheduled') rescheduled += 1;
-    else pending += 1;
+    else scheduled += 1;
 
     const dt = new Date(appt.appt_date);
     const weekday = (dt.getDay() + 6) % 7;
@@ -182,7 +182,7 @@ async function buildAppointmentSummaryFromList(
     no_show: noShow,
     cancelled,
     rescheduled,
-    pending,
+    scheduled,
     checkout_rate: total > 0 ? (checkedOut / total) * 100 : 0,
     noshow_rate: total > 0 ? (noShow / total) * 100 : 0,
   };
@@ -567,4 +567,102 @@ export async function fetchChargesAllPages(
     page += 1;
   } while (page <= pages && page <= 100);
   return all;
+}
+
+// ─── Aggregated Dashboard Endpoints ─────────────────────────────
+// These replace 6+ individual API calls with 1 call each.
+
+export interface OperationalDashboardData {
+  recon_summary: {
+    summary: Array<{ status: string; count: number; billed: number; paid: number; balance: number }>;
+    totals: { count: number; billed: number; paid: number; balance: number };
+  };
+  insurance_cash_collected: {
+    insurance_cash_collected: number;
+    era_processed_amount: number;
+    cash_collected_mapped_amount: number;
+    unmapped_gap_amount: number;
+    payer_breakdown: Array<{
+      payer_name: string;
+      era_processed_amount: number;
+      cash_collected_mapped_amount: number;
+      unmapped_gap_amount: number;
+    }>;
+  };
+  prior_recon_summary: {
+    summary: Array<{ status: string; count: number; billed: number; paid: number; balance: number }>;
+    totals: { count: number; billed: number; paid: number; balance: number };
+  } | null;
+  appointments: Array<{
+    id: string;
+    patient_id?: string;
+    provider_id?: string;
+    appt_date?: string;
+    start_time?: string;
+    status?: string;
+    provider_name?: string;
+  }>;
+  charges: Array<{
+    id: string;
+    service_date?: string;
+    cpt_code?: string;
+    provider_id?: string;
+  }>;
+  ar_aging: ReconAgingBucketItem[];
+}
+
+export async function getOperationalDashboardData(params: {
+  start_date?: string;
+  end_date?: string;
+} = {}): Promise<OperationalDashboardData> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+
+  const res = await api.get('/v1/dashboard/operational-summary', { params: query });
+  return res.data as OperationalDashboardData;
+}
+
+export interface ProviderDashboardData {
+  appointment_summary: {
+    kpis: AppointmentKPIs;
+    bounds: { min_date: string | null; max_date: string | null };
+    daily: Array<{
+      appt_date: string;
+      total: number;
+      checked_out: number;
+      no_show: number;
+      cancelled: number;
+      rescheduled: number;
+      pending: number;
+    }>;
+    heatmap: Array<{ weekday: number; hour: number; count: number }>;
+  };
+  providers: Provider[];
+  provider_targets: Array<{
+    provider_id: string;
+    weekly_checkout_target: number;
+    monthly_checkout_target: number;
+  }>;
+  recent_appointments: {
+    items: Appointment[];
+    total: number;
+    page: number;
+    page_size: number;
+    pages: number;
+  };
+}
+
+export async function getProviderDashboardData(params: {
+  start_date?: string;
+  end_date?: string;
+  provider_id?: string;
+} = {}): Promise<ProviderDashboardData> {
+  const query: Record<string, string> = {};
+  if (params.start_date) query.start_date = params.start_date;
+  if (params.end_date) query.end_date = params.end_date;
+  if (params.provider_id) query.provider_id = params.provider_id;
+
+  const res = await api.get('/v1/dashboard/provider-summary', { params: query });
+  return res.data as ProviderDashboardData;
 }

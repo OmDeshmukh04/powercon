@@ -39,7 +39,7 @@ export default function DashboardLayout() {
   const breadcrumbSection = activeRoute?.section ?? 'Dashboards';
   const breadcrumbTitle   = activeRoute?.title   ?? 'Overview';
 
-  /* ── Poll recon warnings every 5 min ── */
+  /* ── Poll recon warnings — delayed initial load + every 5 min ── */
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -55,9 +55,12 @@ export default function DashboardLayout() {
         if (alive) setReconWarnings([]);
       }
     };
-    void load();
+    // Delay initial fetch by 5s so dashboard data loads first
+    const initialDelay = window.setTimeout(() => {
+      if (alive) void load();
+    }, 5000);
     const interval = window.setInterval(load, 5 * 60 * 1000);
-    return () => { alive = false; window.clearInterval(interval); };
+    return () => { alive = false; window.clearTimeout(initialDelay); window.clearInterval(interval); };
   }, []);
 
   /* ── Close notif on outside click ── */

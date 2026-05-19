@@ -13,20 +13,30 @@ const initialState: AuthState = {
   error: null,
 };
 
-export const bootstrapAuth = createAsyncThunk('auth/bootstrap', async () => {
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    return { token: null, user: null as AppUser | null };
-  }
+export const bootstrapAuth = createAsyncThunk(
+  'auth/bootstrap',
+  async (_, { getState }) => {
+    const state = getState() as { auth: AuthState };
 
-  try {
-    const user = await fetchCurrentUser(token);
-    return { token, user };
-  } catch (err) {
-    console.error('bootstrapAuth: failed to fetch current user:', err);
-    throw err;
-  }
-});
+    // If signIn already ran and populated user, skip the /me call entirely.
+    if (state.auth.status === 'authenticated' && state.auth.user) {
+      return { token: state.auth.token, user: state.auth.user };
+    }
+
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      return { token: null, user: null as AppUser | null };
+    }
+
+    try {
+      const user = await fetchCurrentUser(token);
+      return { token, user };
+    } catch (err) {
+      console.error('bootstrapAuth: failed to fetch current user:', err);
+      throw err;
+    }
+  },
+);
 
 export const signIn = createAsyncThunk(
   'auth/signIn',
