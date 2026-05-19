@@ -35,7 +35,7 @@ const fileTypeLabels: Record<FileType, string> = {
 
 export default function Uploads() {
   const [uploads, setUploads] = useState<FileUpload[]>([]);
-  const [meta, _setMeta] = useState<PaginationMeta | null>(null);
+  const [meta] = useState<PaginationMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);

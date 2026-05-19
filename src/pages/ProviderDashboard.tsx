@@ -253,7 +253,7 @@ export default function ProviderDashboard() {
     console.log('Summary daily sample:', summary.daily?.slice(0, 3));
 
     const timer = setTimeout(() => {
-      charts.current.forEach((c) => { try { c.dispose(); } catch (_) {} });
+      charts.current.forEach((c) => { try { c.dispose(); } catch {} });
       charts.current = [];
 
       const ZOOM = [
@@ -772,7 +772,7 @@ export default function ProviderDashboard() {
         });
       }
 
-      const handleResize = () => charts.current.forEach((ch) => { try { ch.resize(); } catch (_) {} });
+      const handleResize = () => charts.current.forEach((ch) => { try { ch.resize(); } catch {} });
       window.addEventListener('resize', handleResize);
       (window as any).currentResizeHandler = handleResize;
     }, 0);
