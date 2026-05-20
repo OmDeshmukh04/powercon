@@ -12,9 +12,9 @@ permissions:
 
 jobs:
 
-  # ─────────────────────────────────────────────
-  # CI JOB
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────
+  # CI (NO DEPLOY, NO SECRETS)
+  # ─────────────────────────────
   ci:
     name: Frontend CI
     runs-on: ubuntu-latest
@@ -32,23 +32,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Build (staging default for validation)
         env:
           VITE_API_URL: ${{ secrets.STAGING_API_URL }}
         run: npm run build
 
 
-  # ─────────────────────────────────────────────
-  # DEPLOY JOB (STAGING + PROD)
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────
+  # DEPLOY JOB
+  # ─────────────────────────────
   deploy:
     name: Deploy to S3
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: github.event_name == 'push'
     needs: [ci]
     runs-on: ubuntu-latest
-
-    # GitHub Environments (important for secrets separation)
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
 
     steps:
       - name: Checkout repository
@@ -63,9 +60,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Decide environment ─────────────────
+      - name: Set environment variables
+        id: env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "VITE_API_URL=${{ secrets.PROD_API_URL }}" >> $GITHUB_ENV
+            echo "BUCKET=${{ secrets.PROD_S3_BUCKET }}" >> $GITHUB_ENV
+            echo "ENV=production" >> $GITHUB_ENV
+          else
+            echo "VITE_API_URL=${{ secrets.STAGING_API_URL }}" >> $GITHUB_ENV
+            echo "BUCKET=${{ secrets.STAGING_S3_BUCKET }}" >> $GITHUB_ENV
+            echo "ENV=staging" >> $GITHUB_ENV
+          fi
+
       - name: Build app
-        env:
-          VITE_API_URL: ${{ github.ref == 'refs/heads/main' && secrets.PROD_API_URL || secrets.STAGING_API_URL }}
         run: npm run build
 
       - name: Configure AWS credentials
@@ -75,24 +84,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Deploy to S3 (STRICT ENV CONTROL)
+      - name: Deploy to S3
         run: |
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            BUCKET="${{ secrets.PROD_S3_BUCKET }}"
-            ENV="production"
-          elif [ "${{ github.ref }}" == "refs/heads/develop" ]; then
-            BUCKET="${{ secrets.STAGING_S3_BUCKET }}"
-            ENV="staging"
-          else
-            echo "❌ Invalid branch for deployment"
-            exit 1
-          fi
-
-          echo "🚀 Deploying to $ENV bucket: $BUCKET"
+          echo "🚀 Deploying $ENV to bucket $BUCKET"
 
           aws s3 sync dist/ "s3://$BUCKET" --delete
 
           aws s3 cp dist/index.html "s3://$BUCKET/index.html" \
             --cache-control "public, max-age=0, must-revalidate"
 
-          echo "✅ Successfully deployed to $ENV"
+          echo "✅ Deploy complete for $ENV"
