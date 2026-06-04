@@ -1,5 +1,46 @@
+// ─── Invoice Dashboard ──────────────────────────────────────────
+export interface InvoiceSnapshot {
+  id: number;
+  as_on_date: string | null;
+  label: string | null;
+  is_latest: boolean;
+  created_at?: string;
+}
+
+export interface InvoiceKpis {
+  ytd_invoices_accrued: number;
+  submitted_invoices: number;
+  shortfall: number;
+  amount_received: number;
+  balance_outstanding: number;
+  cost_of_delayed_payment: number;
+}
+
+export interface InvoiceDashboardData {
+  snapshot: InvoiceSnapshot | null;
+  kpis: InvoiceKpis;
+  date_from: string | null;
+  date_to: string | null;
+  invoices_due_by_customer: Array<{ customer: string; balance: number }>;
+  delay_reasons: Array<{ reason: string; amount: number }>;
+  project_breakdown: Array<{
+    project_type: string; po: number; invoiced: number; receivable: number; received: number;
+  }>;
+  monthly_invoicing: Array<{ month: string; invoiced: number; received: number }>;
+  ar_aging: Array<{ bucket: string; amount: number }>;
+  fy26_po_quarterly: Array<{ quarter: string; value: number }>;
+  fy26_po_quarterly_stacked: Array<Record<string, number | string>>;
+  planned_vs_actual: Array<{ month: string; planned: number; actual: number }>;
+  opportunity_cost_monthly: Array<{ month: string; opportunity_cost: number }>;
+  monthly_ar_days: Array<{ month: string; ar_days: number; submission_delay_days: number }>;
+  project_pipeline: Array<{
+    project_type: string; po_fy30: number; fy26_po: number;
+    invoiced: number; payment_due: number; receipt: number;
+  }>;
+}
+
 // ─── Auth ───────────────────────────────────────────────────────
-export type Role = 'admin' | 'finance' | 'support' | 'provider';
+export type Role = 'admin' | 'finance' | 'support';
 
 export interface User {
   id: number;
@@ -9,28 +50,6 @@ export interface User {
   name?: string;
   is_active?: boolean;
   tenant_id?: string | null;
-}
-
-export interface PaginationMeta {
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-export interface Upload {
-  id: number;
-  upload_id?: string;
-  filename: string;
-  status: string;
-  file_type?: string;
-  uploaded_at: string;
-  tenant_id?: number;
-  error_message?: string;
-  rows?: {
-    accepted?: number;
-    rejected?: number;
-    unassigned?: number;
-  };
 }
 
 export interface LoginRequest {
@@ -46,6 +65,12 @@ export interface LoginResponse {
 }
 
 // ─── Pagination ─────────────────────────────────────────────────
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
@@ -54,204 +79,14 @@ export interface PaginatedResponse<T> {
   pages: number;
 }
 
-// ─── Appointments ───────────────────────────────────────────────
-export type AppointmentStatus =
-  | 'Checked Out'
-  | 'No-show'
-  | 'Cancelled'
-  | 'Rescheduled'
-  | 'Scheduled';
-
-export interface Appointment {
-  id: string;
-  patient_name: string;
-  patient_id: string;
-  provider_name: string;
-  appt_date: string;       // ISO date string
-  start_time?: string;
-  end_time?: string;
-  status: AppointmentStatus;
-  ticket_number?: string;
-  tenant_id: string;
-}
-
-export interface AppointmentFilters {
-  date_from?: string;
-  date_to?: string;
-  provider?: string;
-  status?: string;
-  search?: string;
-  page?: number;
-  page_size?: number;
-}
-
-export interface AppointmentKPIs {
-  total: number;
-  checked_out: number;
-  no_show: number;
-  cancelled: number;
-  rescheduled: number;
-  scheduled: number;
-  checkout_rate: number;
-  noshow_rate: number;
-}
-
-// ─── Reconciliation ─────────────────────────────────────────────
-export type ReconStatus =
-  | 'noshow_fee_collected'
-  | 'noshow_no_fee'
-  | 'checkout_charge_era'
-  | 'checkout_charge_no_era'
-  | 'checkout_no_charge'
-  | 'era_no_charge'
-  | 'charge_no_appt'
-  | 'no_match';
-
-export interface ReconRow {
-  id: number;
-  patient_name: string;
-  provider_name: string;
-  service_date: string;
-  recon_status: ReconStatus;
-  billed_amount: number;
-  paid_amount: number;
-  balance: number;
-  cpt_code?: string;
-  tenant_id: number;
-}
-
-export interface ReconSummaryRow {
-  status: ReconStatus;
-  count: number;
-  billed: number;
-  paid: number;
-  balance: number;
-}
-
-export interface ReconSummary {
-  rows: ReconSummaryRow[];
-  total_count: number;
-  total_billed: number;
-  total_paid: number;
-  total_balance: number;
-  collection_rate: number;
-}
-
-/** Matches GET /v1/reconciliation/aging bucket labels */
-export interface ReconAgingBucketItem {
-  bucket: string;
-  count: number;
-  billed: number;
-  balance: number;
-}
-
-export interface ProviderSummary {
-  provider_name: string;
-  appointment_count: number;
-  billed: number;
-  paid: number;
-  collection_rate: number;
-}
-
-// ─── Bank Transactions ──────────────────────────────────────────
-export interface BankSummary {
-  credits: number;
-  debits: number;
-  txn_count: number;
-  bounds: {
-    min_date: string | null;
-    max_date: string | null;
-  };
-}
-
-export interface InsurancePayerBreakdownItem {
-  payer_name: string;
-  era_processed_amount: number;
-  cash_collected_mapped_amount: number;
-  unmapped_gap_amount: number;
-}
-
-export interface InsuranceCashCollectedResponse {
-  insurance_cash_collected: number;
-  era_processed_amount: number;
-  cash_collected_mapped_amount: number;
-  unmapped_gap_amount: number;
-  payer_breakdown: InsurancePayerBreakdownItem[];
-}
-
 // ─── Uploads ────────────────────────────────────────────────────
-export type UploadStatus = 'pending' | 'processing' | 'completed' | 'failed';
-export type FileType = 'appointments' | 'charges' | 'era' | 'bank_statement';
-
 export interface FileUpload {
-  upload_id: string;
+  upload_id: number;
   filename: string;
-  file_type: FileType;
-  status: UploadStatus;
-  uploaded_at: string;
-  completed_at?: string | null;
-  error_message?: string | null;
-  description?: string | null;
-  rows?: {
-    accepted?: number;
-    rejected?: number;
-    unassigned?: number;
-  };
-}
-
-// ─── Providers ──────────────────────────────────────────────────
-export interface Provider {
-  id: string;
-  name: string;
-  tenant_id: string;
-}
-
-export interface ProviderTarget {
-  provider_id: string;
-  weekly_checkout_target: number;
-  monthly_checkout_target: number;
-}
-
-// ─── Appointment summary / analytics ────────────────────────────
-export interface AppointmentDailySeriesItem {
-  appt_date: string; // ISO date string
-  total: number;
-  checked_out: number;
-  no_show: number;
-  cancelled: number;
-  rescheduled: number;
-  scheduled: number;
-}
-
-export interface AppointmentHeatmapItem {
-  weekday: number; // 0=Mon..6=Sun
-  hour: number; // 0-23
-  count: number;
-}
-
-export interface AppointmentDateBounds {
-  min_date?: string | null;
-  max_date?: string | null;
-}
-
-export interface AppointmentSummary {
-  kpis: AppointmentKPIs;
-  bounds: AppointmentDateBounds;
-  daily: AppointmentDailySeriesItem[];
-  heatmap: AppointmentHeatmapItem[];
-}
-
-// ─── Reports / Charts ───────────────────────────────────────────
-export interface ChartDataPoint {
-  label: string;
-  value: number;
-  color?: string;
-}
-
-export interface StatusBreakdown {
+  file_type: string;
   status: string;
-  count: number;
-  billed: number;
-  paid: number;
-  pct: number;
+  rows?: { accepted?: number; rejected?: number };
+  error_message?: string | null;
+  uploaded_at: string;
+  tenant_id?: number;
 }

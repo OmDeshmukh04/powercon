@@ -1,10 +1,6 @@
 import type { ReactElement } from 'react';
-import ProviderDashboard from '../pages/ProviderDashboard';
-import OperationalDashboard from '../pages/OperationalDashboard';
+import InvoiceDashboard from '../pages/InvoiceDashboard';
 import Uploads from '../pages/Uploads';
-import Reports from '../pages/Reports';
-import Manage from '../pages/Manage';
-import LockPeriods from '../pages/LockPeriods';
 import Profile from '../pages/Profile';
 import Settings from '../pages/Settings';
 import type { AppRole } from '../types/auth';
@@ -19,14 +15,10 @@ export interface AppRouteItem {
 }
 
 export const appRoutes: AppRouteItem[] = [
-  { path: '/provider-dashboard', title: 'Provider Dashboard', section: 'Dashboards', icon: '📅', roles: ['admin', 'finance', 'support', 'provider'], element: <ProviderDashboard /> },
-  { path: '/operational-dashboard', title: 'Operational Dashboard', section: 'Dashboards', icon: '💰', roles: ['admin', 'finance'], element: <OperationalDashboard /> },
-  { path: '/uploads', title: 'Uploads', section: 'Admin', icon: '📤', roles: ['admin'], element: <Uploads /> },
-  { path: '/reports', title: 'Reports', section: 'Admin', icon: '📊', roles: ['admin', 'finance', 'support'], element: <Reports /> },
-  { path: '/manage', title: 'Manage', section: 'Admin', icon: '⚙️', roles: ['admin'], element: <Manage /> },
-  { path: '/profile', title: 'Profile', section: 'Account', icon: '👤', roles: ['admin', 'finance', 'support', 'provider'], element: <Profile /> },
-  { path: '/settings', title: 'Settings', section: 'Account', icon: '🔧', roles: ['admin', 'finance', 'support', 'provider'], element: <Settings /> },
-  { path: '/lock-periods', title: 'Lock Periods', section: 'Account', icon: '🔒', roles: ['admin', 'finance'], element: <LockPeriods /> },
+  { path: '/invoice-dashboard', title: 'Invoice Dashboard', section: 'Dashboards', icon: '🧾', roles: ['admin', 'finance', 'support'], element: <InvoiceDashboard /> },
+  { path: '/uploads',           title: 'Uploads',           section: 'Admin',       icon: '📤', roles: ['admin'],                       element: <Uploads /> },
+  { path: '/profile',           title: 'Profile',           section: 'Account',     icon: '👤', roles: ['admin', 'finance', 'support'],  element: <Profile /> },
+  { path: '/settings',          title: 'Settings',          section: 'Account',     icon: '🔧', roles: ['admin', 'finance', 'support'],  element: <Settings /> },
 ];
 
 export const routeSections = ['Dashboards', 'Admin', 'Account'] as const;

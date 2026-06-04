@@ -152,12 +152,12 @@ export default function Login() {
         <div className="login-bg-blob" style={{ width: 200, height: 200, background: 'rgba(154,165,180,.04)', top: '40%', left: '60%' }} />
 
         <div className="login-wrap">
-          <div className="lw-brand">
-            <img src="/login-logo.webp" alt="CapSurge" className="lw-logo" />
+          <div className="lw-brand" style={{ marginBottom: 24 }}>
+            <img src="/powercon-logo.png" alt="Powercon" className="lw-logo" style={{ width: 200, height: 'auto' }} />
           </div>
 
           <div className="lw-title">Sign in</div>
-          <div className="lw-sub">Healthcare billing intelligence platform</div>
+          <div className="lw-sub">Invoicing MIS Dashboard</div>
 
           {error && <div className="lf-error">⚠️ {error}</div>}
 
@@ -188,7 +188,7 @@ export default function Login() {
           </div>
 
           <button className="lf-btn" onClick={doLogin} disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign in to CapSurge →'}
+            {loading ? 'Signing in…' : 'Sign in →'}
           </button>
         </div>
       </div>

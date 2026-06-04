@@ -9,10 +9,10 @@ export const ROLE_LABELS: Record<AppRole, string> = {
 };
 
 export const ROLE_HOME_PATHS: Record<AppRole, string> = {
-  admin: '/provider-dashboard',
-  finance: '/operational-dashboard',
-  support: '/provider-dashboard',
-  provider: '/provider-dashboard',
+  admin:    '/invoice-dashboard',
+  finance:  '/invoice-dashboard',
+  support:  '/invoice-dashboard',
+  provider: '/invoice-dashboard',
 };
 
 export const API_ROLE_TO_APP_ROLE = (role?: string | null): AppRole => {
