@@ -70,15 +70,12 @@ export default function DashboardLayout() {
             role="link"
             tabIndex={0}
             aria-label="Powercon MIS home"
-            style={{ width: '100%', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             onClick={() => navigate(ROLE_HOME_PATHS[user?.role ?? 'admin'])}
             onKeyDown={e => e.key === 'Enter' && navigate(ROLE_HOME_PATHS[user?.role ?? 'admin'])}
           >
-            <img
-              src="/powercon-logo.png"
-              alt="Powercon"
-              style={{ width: '100%', maxWidth: 196, maxHeight: 42, objectFit: 'contain', display: 'block' }}
-            />
+            <div className="nb-brand-mark" aria-hidden="true">
+              <img src="/powercon-logo.png" alt="Powercon" className="nb-logo" />
+            </div>
           </div>
         </div>
 

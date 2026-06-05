@@ -152,8 +152,14 @@ export default function Login() {
         <div className="login-bg-blob" style={{ width: 200, height: 200, background: 'rgba(154,165,180,.04)', top: '40%', left: '60%' }} />
 
         <div className="login-wrap">
-          <div className="lw-brand" style={{ marginBottom: 24 }}>
-            <img src="/powercon-logo.png" alt="Powercon" className="lw-logo" style={{ width: 200, height: 'auto' }} />
+          {/* CapSurge logo — powered by */}
+          <div className="lw-brand">
+            <img src="/login-logo.webp" alt="CapSurge" className="lw-logo" />
+          </div>
+
+          {/* Powercon client brand */}
+          <div style={{ textAlign: 'center', marginBottom: 22 }}>
+            <img src="/powercon-logo.png" alt="Powercon" style={{ width: 180, height: 'auto', display: 'inline-block' }} />
           </div>
 
           <div className="lw-title">Sign in</div>

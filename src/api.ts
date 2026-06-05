@@ -1,6 +1,9 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios';
 import type { LoginRequest, LoginResponse, User, FileUpload, PaginatedResponse } from './types';
-import type { InvoiceDashboardData, InvoiceSnapshot } from './types';
+import type {
+  InvoiceDashboardData, InvoiceSnapshot,
+  CustomerSummaryRow, InvoiceListResponse, InvoiceFilterOptions,
+} from './types';
 
 const TOKEN_KEY  = 'token';
 const TENANT_KEY = 'tenant_id';
@@ -114,6 +117,33 @@ export async function getInvoiceDashboard(opts?: {
 export async function getInvoiceSnapshots(): Promise<InvoiceSnapshot[]> {
   const res = await api.get('/v1/invoice-dashboard/snapshots');
   return (res.data?.snapshots ?? []) as InvoiceSnapshot[];
+}
+
+export async function getCustomerSummary(snapshotId?: number): Promise<CustomerSummaryRow[]> {
+  const params: Record<string, number> = {};
+  if (snapshotId) params.snapshot_id = snapshotId;
+  const res = await api.get('/v1/invoice-dashboard/customers', { params });
+  return (res.data?.customers ?? []) as CustomerSummaryRow[];
+}
+
+export async function getInvoiceList(opts: {
+  customer?: string; status?: string; projectType?: string;
+  search?: string; page?: number; pageSize?: number;
+} = {}): Promise<InvoiceListResponse> {
+  const params: Record<string, string | number> = {
+    page: opts.page ?? 1, page_size: opts.pageSize ?? 50,
+  };
+  if (opts.customer)    params.customer = opts.customer;
+  if (opts.status)      params.status = opts.status;
+  if (opts.projectType) params.project_type = opts.projectType;
+  if (opts.search)      params.search = opts.search;
+  const res = await api.get('/v1/invoice-dashboard/invoices', { params });
+  return res.data as InvoiceListResponse;
+}
+
+export async function getInvoiceFilterOptions(): Promise<InvoiceFilterOptions> {
+  const res = await api.get('/v1/invoice-dashboard/invoice-filters');
+  return res.data as InvoiceFilterOptions;
 }
 
 // ─── Pagination helper (kept for Upload page) ────────────────────

@@ -54,13 +54,14 @@ body {
 }
 
 /* logo slot */
+/* logo slot — matches the Saas dark-blue unified navbar */
 .nb-sidebar-space {
   width: var(--sidebar-w);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: 0 12px 0 10px;
+  padding: 0 12px;
   border-right: 1px solid rgba(255,255,255,.14);
   background: var(--accent);
   height: 100%;
@@ -69,32 +70,33 @@ body {
 .nb-brand {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
+  gap: 0;
   cursor: pointer;
   text-decoration: none;
+  width: 100%;
 }
 
+/* Wide white pill that holds the Powercon logo on the dark navbar */
 .nb-brand-mark {
-  height: 42px;
-  border-radius: 12px;
+  width: 152px;
+  height: 38px;
+  border-radius: 9px;
   background: #ffffff;
-  border: 1px solid rgba(255,255,255,.6);
-  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+  border: 1px solid rgba(255,255,255,.55);
+  box-shadow: 0 4px 14px rgba(0,0,0,.18);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 4px 8px;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .nb-logo {
-  width: 34px;
-  height: 34px;
-  max-width: 34px;
-  max-height: 34px;
+  width: 100%;
+  height: 100%;
   display: block;
   object-fit: contain;
-  flex-shrink: 0;
 }
 
 .nb-brand-copy {

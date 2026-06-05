@@ -49,8 +49,14 @@ const DATA_ZOOM = [
 const GRID = { top: 14, right: 14, bottom: 48, left: 52 };
 const GRID_H = { top: 10, right: 60, bottom: 32, left: 120 }; // horizontal bars
 
-/* Project pipeline: 5 metrics — dark→light blue family + silver */
-const PP = { po_fy30: C.b1, fy26_po: C.g1, invoiced: C.b2, payment_due: C.b3, receipt: C.g2 };
+/* Project pipeline — Blue / Grey / existing blue-silver palette (no teal) */
+const PP  = {
+  po_fy30:     '#014569',  // Blue  (PO total)
+  fy26_po:     '#8c8c8c',  // Grey  (FY26 plan)
+  invoiced:    '#026aa2',  // accent-d (medium blue, already in pie charts)
+  payment_due: '#6b7e96',  // silver   (already in pie charts)
+  receipt:     '#94a3b8',  // lighter silver (already in pie charts)
+};
 
 const INR      = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
 const fmtCr    = (n: number) => `₹${INR.format(+(n / 1e7).toFixed(2))} Cr`;
@@ -290,7 +296,13 @@ export default function InvoiceDashboard() {
     if (!rows?.length) return null;
     const quarters  = rows.map(r => r.quarter as string);
     const allTypes  = Object.keys(rows[0] ?? {}).filter(k => k !== 'quarter');
-    const TYPE_COLORS: Record<string, string> = { Operations: C.b1, Construction: C.b2, Development: C.g1, 'One-Time': C.b3, Unspecified: C.g2 };
+    const TYPE_COLORS: Record<string, string> = {
+      Operations:   '#014569',  // Blue
+      Construction: '#8c8c8c',  // Grey
+      Development:  '#026aa2',  // medium blue (from pie palette)
+      'One-Time':   '#6b7e96',  // silver (from pie palette)
+      Unspecified:  '#94a3b8',  // lighter silver
+    };
     return {
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', ...TT, axisPointer: { type: 'shadow' } },
@@ -303,7 +315,9 @@ export default function InvoiceDashboard() {
         name: pt, type: 'bar' as const, stack: 'q', barMaxWidth: 48,
         data: rows.map(r => (r[pt] as number) ?? 0),
         itemStyle: { color: TYPE_COLORS[pt] ?? PIE_COLORS[i % PIE_COLORS.length], borderRadius: i === allTypes.length - 1 ? BR4 : [0,0,0,0] as [number,number,number,number] },
-        label: { show: true, position: 'inside' as const, fontSize: 10, color: '#fff', formatter: (p: any) => p.value > 0 ? `${p.value}` : '' },
+        label: { show: true, position: 'inside' as const, fontSize: 10,
+          color: '#fff',
+          formatter: (p: any) => p.value > 0 ? `${p.value}` : '' },
       })),
     };
   }, [d?.fy26_po_quarterly_stacked]);
@@ -322,8 +336,12 @@ export default function InvoiceDashboard() {
       xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false } },
       yAxis: { type: 'category', data: cats, inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...AX, width: 110 } },
       series: [{ type: 'bar', barMaxWidth: 40,
-        data: vals.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: [0, 4, 4, 0] as [number,number,number,number] } })),
-        label: { show: true, position: 'right' as const, fontSize: 11, color: C.text2, formatter: (p: any) => `${p.value}` },
+        data: vals.map((v, i) => ({
+          value: v,
+          itemStyle: { color: colors[i], borderRadius: [0, 4, 4, 0] as [number,number,number,number] },
+        })),
+        label: { show: true, position: 'right' as const, fontSize: 11, color: C.text2,
+          formatter: (p: any) => `${p.value} Cr` },
       }],
     };
   }

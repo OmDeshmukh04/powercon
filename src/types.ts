@@ -39,6 +39,50 @@ export interface InvoiceDashboardData {
   }>;
 }
 
+export interface CustomerSummaryRow {
+  customer: string;
+  invoice_count: number;
+  invoiced: number;
+  receivable: number;
+  received: number;
+  outstanding: number;
+  opportunity_cost: number;
+  collection_rate: number;
+}
+
+export interface InvoiceRow {
+  id: number;
+  invoice_number: string | null;
+  customer: string | null;
+  project: string | null;
+  project_type: string | null;
+  invoice_type: string | null;
+  invoicing_period: string | null;
+  gross_invoice_amount: number;
+  total_receivable: number;
+  amount_received: number;
+  balance_outstanding: number;
+  status: string | null;
+  aging_days: number | null;
+  aging_bucket: string | null;
+  opportunity_cost: number;
+}
+
+export interface InvoiceListResponse {
+  items: InvoiceRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  snapshot?: { id: number; as_on_date: string | null };
+}
+
+export interface InvoiceFilterOptions {
+  customers: string[];
+  statuses: string[];
+  project_types: string[];
+}
+
 // ─── Auth ───────────────────────────────────────────────────────
 export type Role = 'admin' | 'finance' | 'support';
 
