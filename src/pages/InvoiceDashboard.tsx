@@ -244,11 +244,15 @@ export default function InvoiceDashboard() {
       yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...AX } },
       series: [
         { name: 'AR Days', type: 'bar', stack: 'ar', barMaxWidth: 36,
-          data: d.monthly_ar_days.map(r => r.ar_days), itemStyle: { color: DUO.primary },
-          label: { show: true, position: 'inside' as const, fontSize: 10, color: '#fff', formatter: (p: any) => p.value > 0 ? `${p.value}` : '' } },
-        { name: 'Submission Delay Days', type: 'bar', stack: 'ar', barMaxWidth: 36,
-          data: d.monthly_ar_days.map(r => r.submission_delay_days), itemStyle: { color: DUO.secondary },
-          label: { show: true, position: 'top' as const, fontSize: 10, color: C.text2, formatter: (p: any) => p.value > 0 ? `${p.value}` : '' } },
+          data: d.monthly_ar_days.map(r => r.ar_days),
+          itemStyle: { color: '#014569' },          // same blue as opportunity cost positive bars
+          label: { show: true, position: 'inside' as const, fontSize: 10, color: '#fff',
+            formatter: (p: any) => p.value > 0 ? `${p.value}` : '' } },
+        { name: 'Submission Delay', type: 'bar', stack: 'ar', barMaxWidth: 36,
+          data: d.monthly_ar_days.map(r => r.submission_delay_days),
+          itemStyle: { color: '#8c8c8c' },          // same grey as pipeline
+          label: { show: true, position: 'top' as const, fontSize: 10, color: C.text2,
+            formatter: (p: any) => p.value > 0 ? `${p.value}` : '' } },
       ],
     };
   }, [d?.monthly_ar_days]);
@@ -308,16 +312,22 @@ export default function InvoiceDashboard() {
       tooltip: { trigger: 'axis', ...TT, axisPointer: { type: 'shadow' } },
       legend: { bottom: 18, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { fontSize: 10, color: C.text2 } },
       dataZoom: DATA_ZOOM,
-      grid: { ...GRID, bottom: 64 },
+      grid: { top: 36, right: 14, bottom: 64, left: 52 },
       xAxis: { type: 'category', data: quarters, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...AX } },
-      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...AX, formatter: (v: number) => `${v}Cr` } },
+      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: C.border, type: 'dashed' } }, axisLabel: { ...AX, formatter: (v: number) => `${v}Cr` } },
       series: allTypes.map((pt, i) => ({
-        name: pt, type: 'bar' as const, stack: 'q', barMaxWidth: 48,
+        name: pt, type: 'bar' as const, stack: 'q', barMaxWidth: 56,
         data: rows.map(r => (r[pt] as number) ?? 0),
         itemStyle: { color: TYPE_COLORS[pt] ?? PIE_COLORS[i % PIE_COLORS.length], borderRadius: i === allTypes.length - 1 ? BR4 : [0,0,0,0] as [number,number,number,number] },
-        label: { show: true, position: 'inside' as const, fontSize: 10,
-          color: '#fff',
-          formatter: (p: any) => p.value > 0 ? `${p.value}` : '' },
+        label: {
+          show: true,
+          position: 'top' as const,
+          fontSize: 10,
+          color: C.text,
+          fontWeight: 500,
+          formatter: (p: any) => (p.value as number) > 0 ? `${p.value}` : '',
+        },
+        labelLayout: { hideOverlap: true, dy: -2 },
       })),
     };
   }, [d?.fy26_po_quarterly_stacked]);
@@ -432,7 +442,7 @@ export default function InvoiceDashboard() {
       {/* Section: PO / Pipeline */}
       <div className="dash-section" style={{ marginBottom: 10 }}>Project Pipeline &amp; PO Breakup</div>
       <div style={{ marginBottom: 16 }}>
-        <ChartBox title="Quarterly Breakup of FY26 POs" sub="Stacked by project type (INR Cr)" refEl={refQuarter} loading={loading} empty={!d?.fy26_po_quarterly_stacked?.length} height={240} />
+        <ChartBox title="Quarterly Breakup of FY26 POs" sub="Stacked by project type (INR Cr)" refEl={refQuarter} loading={loading} empty={!d?.fy26_po_quarterly_stacked?.length} height={270} />
       </div>
       <div className="charts-2col" style={{ marginBottom: 16 }}>
         <ChartBox title="Total (INR Cr)"                sub="PO / FY26 PO / Invoice / Payment Due / Receipt" refEl={refTotal} loading={loading} empty={!d?.project_pipeline?.some(r => r.project_type === 'Total')}        height={220} />
