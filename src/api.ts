@@ -3,6 +3,7 @@ import type { LoginRequest, LoginResponse, User, FileUpload, PaginatedResponse }
 import type {
   InvoiceDashboardData, InvoiceSnapshot,
   CustomerSummaryRow, InvoiceListResponse, InvoiceFilterOptions,
+  CollectionsResponse,
 } from './types';
 
 const TOKEN_KEY  = 'token';
@@ -144,6 +145,21 @@ export async function getInvoiceList(opts: {
 export async function getInvoiceFilterOptions(): Promise<InvoiceFilterOptions> {
   const res = await api.get('/v1/invoice-dashboard/invoice-filters');
   return res.data as InvoiceFilterOptions;
+}
+
+export async function getCollections(opts: {
+  snapshotId?: number; bucket?: string; customer?: string; search?: string;
+  page?: number; pageSize?: number;
+} = {}): Promise<CollectionsResponse> {
+  const params: Record<string, string | number> = {
+    page: opts.page ?? 1, page_size: opts.pageSize ?? 50,
+  };
+  if (opts.snapshotId) params.snapshot_id = opts.snapshotId;
+  if (opts.bucket)     params.bucket = opts.bucket;
+  if (opts.customer)   params.customer = opts.customer;
+  if (opts.search)     params.search = opts.search;
+  const res = await api.get('/v1/invoice-dashboard/collections', { params });
+  return res.data as CollectionsResponse;
 }
 
 // ─── Pagination helper (kept for Upload page) ────────────────────

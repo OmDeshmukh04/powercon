@@ -47,7 +47,6 @@ const DATA_ZOOM = [
 ];
 /* Grid with extra bottom room for the dataZoom slider */
 const GRID = { top: 14, right: 14, bottom: 48, left: 52 };
-const GRID_H = { top: 10, right: 60, bottom: 32, left: 120 }; // horizontal bars
 
 /* Project pipeline — Blue / Grey / existing blue-silver palette (no teal) */
 const PP  = {
@@ -120,18 +119,14 @@ export default function InvoiceDashboard() {
   const [dateTo,   setDateTo]   = useState(fyEnd(today));
   const [applied,  setApplied]  = useState({ from: fyStart(today), to: fyEnd(today) });
 
-  /* 13 chart refs — one per chart */
-  const refDue      = useRef<HTMLDivElement>(null);  // 1. Invoices Due pie
-  const refDelay    = useRef<HTMLDivElement>(null);  // 2. Delay Reasons pie
-  const refOppCost  = useRef<HTMLDivElement>(null);  // 3. Opportunity Cost monthly
-  const refArDays   = useRef<HTMLDivElement>(null);  // 4. Monthly AR Days stacked
-  const refAging    = useRef<HTMLDivElement>(null);  // 5. AR Aging buckets
-  const refPlanned  = useRef<HTMLDivElement>(null);  // 6. Planned vs Actual
-  const refQuarter  = useRef<HTMLDivElement>(null);  // 7. Quarterly FY26 POs stacked
-  const refTotal    = useRef<HTMLDivElement>(null);  // 8. Total pipeline (horizontal)
-  const refConst    = useRef<HTMLDivElement>(null);  // 9. Construction pipeline (horizontal)
-  const refOps      = useRef<HTMLDivElement>(null);  // 10. Operations pipeline (horizontal)
-  const refDev      = useRef<HTMLDivElement>(null);  // 11. Development pipeline (horizontal)
+  /* chart refs — pipeline charts are now handled by PipelineChart sub-component */
+  const refDue      = useRef<HTMLDivElement>(null);
+  const refDelay    = useRef<HTMLDivElement>(null);
+  const refOppCost  = useRef<HTMLDivElement>(null);
+  const refArDays   = useRef<HTMLDivElement>(null);
+  const refAging    = useRef<HTMLDivElement>(null);
+  const refPlanned  = useRef<HTMLDivElement>(null);
+  const refQuarter  = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -332,41 +327,7 @@ export default function InvoiceDashboard() {
     };
   }, [d?.fy26_po_quarterly_stacked]);
 
-  /* ── helper for project pipeline horizontal bar charts ── */
-  function pipelineOption(projectType: string): EChartsOption | null {
-    const row = d?.project_pipeline?.find(r => r.project_type === projectType);
-    if (!row) return null;
-    const cats   = ['PO (upto FY30)', 'FY 26 PO', 'Invoice', 'Payment Due / Eligible', 'Receipt'];
-    const vals   = [row.po_fy30, row.fy26_po, row.invoiced, row.payment_due, row.receipt];
-    const colors = [PP.po_fy30, PP.fy26_po, PP.invoiced, PP.payment_due, PP.receipt];
-    return {
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis', ...TT, axisPointer: { type: 'shadow' }, formatter: (params: any) => `<b>${params[0]?.name}</b><br/>${params[0]?.value} Cr` },
-      grid: GRID_H,
-      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false } },
-      yAxis: { type: 'category', data: cats, inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...AX, width: 110 } },
-      series: [{ type: 'bar', barMaxWidth: 40,
-        data: vals.map((v, i) => ({
-          value: v,
-          itemStyle: { color: colors[i], borderRadius: [0, 4, 4, 0] as [number,number,number,number] },
-        })),
-        label: { show: true, position: 'right' as const, fontSize: 11, color: C.text2,
-          formatter: (p: any) => `${p.value} Cr` },
-      }],
-    };
-  }
-
-  /* ── 8. Total pipeline ── */
-  useChart(refTotal, () => pipelineOption('Total'), [d?.project_pipeline]);
-
-  /* ── 9. Construction pipeline (EPC → Construction via backend mapping) ── */
-  useChart(refConst, () => pipelineOption('Construction'), [d?.project_pipeline]);
-
-  /* ── 10. Operations pipeline (O&M → Operations via backend mapping) ── */
-  useChart(refOps, () => pipelineOption('Operations'), [d?.project_pipeline]);
-
-  /* ── 11. Development pipeline ── */
-  useChart(refDev, () => pipelineOption('Development'), [d?.project_pipeline]);
+  /* pipeline charts are rendered by <PipelineChart> — fully data-driven */
 
   /* ── render ── */
   const snap = d?.snapshot;
@@ -439,19 +400,41 @@ export default function InvoiceDashboard() {
         <ChartBox title="Planned vs Actual"          sub="Monthly invoicing (INR Cr)"            refEl={refPlanned} loading={loading} empty={!d?.planned_vs_actual?.length} />
       </div>
 
-      {/* Section: PO / Pipeline */}
+      {/* Section: PO / Pipeline — fully data-driven */}
       <div className="dash-section" style={{ marginBottom: 10 }}>Project Pipeline &amp; PO Breakup</div>
       <div style={{ marginBottom: 16 }}>
         <ChartBox title="Quarterly Breakup of FY26 POs" sub="Stacked by project type (INR Cr)" refEl={refQuarter} loading={loading} empty={!d?.fy26_po_quarterly_stacked?.length} height={270} />
       </div>
-      <div className="charts-2col" style={{ marginBottom: 16 }}>
-        <ChartBox title="Total (INR Cr)"                sub="PO / FY26 PO / Invoice / Payment Due / Receipt" refEl={refTotal} loading={loading} empty={!d?.project_pipeline?.some(r => r.project_type === 'Total')}        height={220} />
-        <ChartBox title="Project Construction (INR Cr)" sub="PO / FY26 PO / Invoice / Payment Due / Receipt" refEl={refConst} loading={loading} empty={!d?.project_pipeline?.some(r => r.project_type === 'Construction')} height={220} />
-      </div>
-      <div className="charts-2col" style={{ marginBottom: 16 }}>
-        <ChartBox title="Project Operations (INR Cr)"   sub="PO / FY26 PO / Invoice / Payment Due / Receipt" refEl={refOps}   loading={loading} empty={!d?.project_pipeline?.some(r => r.project_type === 'Operations')}   height={220} />
-        <ChartBox title="Project Development (INR Cr)"  sub="PO / FY26 PO / Invoice / Payment Due / Receipt" refEl={refDev}   loading={loading} empty={!d?.project_pipeline?.some(r => r.project_type === 'Development')}  height={220} />
-      </div>
+
+      {/* One chart per project type returned by the API — no hardcoding */}
+      {loading ? (
+        <div className="charts-2col" style={{ marginBottom: 16 }}>
+          {[0,1].map(i => <div key={i} className="chart-box" style={{ height: 220 }}><div style={{ height: 220, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text3)', fontSize:13 }}>Loading…</div></div>)}
+        </div>
+      ) : (() => {
+        const pipeline = d?.project_pipeline ?? [];
+        // Total first, then remaining sorted alphabetically
+        const ordered = [
+          ...pipeline.filter(r => r.project_type === 'Total'),
+          ...pipeline.filter(r => r.project_type !== 'Total' && r.project_type !== 'Unspecified')
+            .sort((a, b) => a.project_type.localeCompare(b.project_type)),
+        ];
+        if (!ordered.length) return null;
+        // Pair into 2-column rows
+        const pairs: PipelineRow[][] = [];
+        for (let i = 0; i < ordered.length; i += 2) pairs.push(ordered.slice(i, i + 2) as PipelineRow[]);
+        return pairs.map((pair, pi) => (
+          <div key={pi} className="charts-2col" style={{ marginBottom: 16 }}>
+            {pair.map((row: PipelineRow) => (
+              <PipelineChart
+                key={row.project_type}
+                row={row}
+                height={220}
+              />
+            ))}
+          </div>
+        ));
+      })()}
 
       {snap?.created_at && (
         <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'right', marginBottom: 8 }}>
@@ -481,6 +464,67 @@ function KpiCard({ label, value, sub, emoji, color, loading }: {
     </div>
   );
 }
+
+/* ── PipelineChart — self-contained, one per project type from the API ── */
+type PipelineRow = { project_type: string; po_fy30: number; fy26_po: number; invoiced: number; payment_due: number; receipt: number };
+
+function PipelineChart({ row, height = 220 }: { row: PipelineRow; height?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inst = useRef<echarts.ECharts | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    if (!inst.current || inst.current.isDisposed()) {
+      inst.current = echarts.init(ref.current);
+    }
+    const ch = inst.current;
+    const cats   = ['PO (upto FY30)', 'FY 26 PO', 'Invoice', 'Payment Due / Eligible', 'Receipt'];
+    const vals   = [row.po_fy30, row.fy26_po, row.invoiced, row.payment_due, row.receipt];
+    const colors = [PP.po_fy30, PP.fy26_po, PP.invoiced, PP.payment_due, PP.receipt];
+    ch.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#fff', borderColor: '#e2e8f0',
+        textStyle: { color: '#1e293b', fontSize: 12 },
+        extraCssText: 'box-shadow:0 4px 16px rgba(0,0,0,.08);border-radius:8px',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => `<b>${params[0]?.name}</b><br/>${params[0]?.value} Cr`,
+      },
+      grid: { top: 10, right: 64, bottom: 10, left: 130, containLabel: false },
+      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false } },
+      yAxis: { type: 'category', data: cats, inverse: true, axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { fontFamily: 'Montserrat,sans-serif', fontSize: 10, color: '#64748b', width: 120 } },
+      series: [{ type: 'bar', barMaxWidth: 40,
+        data: vals.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: [0, 4, 4, 0] as [number,number,number,number] } })),
+        label: { show: true, position: 'right' as const, fontSize: 11, color: '#64748b',
+          formatter: (p: any) => `${(p.value as number).toFixed(1)} Cr` },
+      }],
+    }, { notMerge: true });
+    const onResize = () => { try { ch.resize(); } catch { /* */ } };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [row]);
+
+  useEffect(() => () => { try { inst.current?.dispose(); } catch { /* */ } inst.current = null; }, []);
+
+  const title = row.project_type === 'Total' ? 'Total (INR Cr)' : `Project ${row.project_type} (INR Cr)`;
+
+  return (
+    <div className="chart-box" style={{ marginBottom: 0 }}>
+      <div className="ch-head">
+        <div>
+          <div className="ch-title">{title}</div>
+          <div className="ch-sub">PO / FY26 PO / Invoice / Payment Due / Receipt</div>
+        </div>
+      </div>
+      <div style={{ position: 'relative', height }}>
+        <div ref={ref} style={{ width: '100%', height: '100%' }} />
+      </div>
+    </div>
+  );
+}
+
 
 function ChartBox({ title, sub, refEl, loading, empty, emptyMsg, height = 240 }: {
   title: string; sub: string;

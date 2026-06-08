@@ -83,6 +83,49 @@ export interface InvoiceFilterOptions {
   project_types: string[];
 }
 
+// ─── Collections workbench ──────────────────────────────────────
+export interface CollectionsSummary {
+  total_outstanding: number;
+  invoice_count: number;
+  avg_days_overdue: number;
+  total_opportunity_cost: number;
+}
+
+export interface CollectionsBucket {
+  bucket: string;
+  amount: number;
+  count: number;
+}
+
+export interface CollectionsRow {
+  id: number;
+  invoice_number: string | null;
+  customer: string | null;
+  project: string | null;
+  project_type: string | null;
+  invoicing_period: string | null;
+  total_receivable: number;
+  amount_received: number;
+  balance_outstanding: number;
+  receipt_due_date: string | null;
+  aging_days: number | null;
+  aging_bucket: string | null;
+  status: string | null;
+  delay_reason: string | null;
+  opportunity_cost: number;
+}
+
+export interface CollectionsResponse {
+  snapshot: { id: number; as_on_date: string | null } | null;
+  summary: CollectionsSummary;
+  by_bucket: CollectionsBucket[];
+  items: CollectionsRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
 // ─── Auth ───────────────────────────────────────────────────────
 export type Role = 'admin' | 'finance' | 'support';
 
